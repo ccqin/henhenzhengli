@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using DesktopManager.Core.Models;
 namespace DesktopManager.Core.Services;
@@ -8,6 +9,7 @@ public sealed class ConfigStore : IConfigStore
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 

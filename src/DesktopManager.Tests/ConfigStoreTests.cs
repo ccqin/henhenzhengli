@@ -37,4 +37,25 @@ public class ConfigStoreTests
         Assert.False(loaded.HideExplorerIcons); // 默认不接管，安全
         Assert.Empty(loaded.Fences);
     }
+
+    [Fact]
+    public void Save_Load_PreservesNonAsciiCharacters()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            var store = new ConfigStore(path);
+            var config = new AppConfig(
+                HideExplorerIcons: true,
+                AutoStart: false,
+                Fences: new[] { new FenceConfig("f1", "工作收纳盒", 0, 0, 100, 100) });
+
+            store.Save(config);
+            var json = File.ReadAllText(path);
+            Assert.DoesNotContain("\\u", json); // 中文不应被转义成 \uXXXX
+            var loaded = store.Load();
+            Assert.Equal("工作收纳盒", loaded.Fences[0].Title);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
 }
