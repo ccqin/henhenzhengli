@@ -1,13 +1,22 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
+using H.NotifyIcon;
 
 namespace DesktopManager.App;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
 public partial class App : Application
 {
-}
+    private TaskbarIcon? _tray;
 
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+        _tray = (TaskbarIcon)FindResource("TrayIcon");
+        _tray.ForceCreate();
+    }
+
+    private void OnExit_Clicked(object sender, RoutedEventArgs e)
+    {
+        _tray?.Dispose();
+        Shutdown();
+    }
+}
