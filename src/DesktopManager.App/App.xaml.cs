@@ -19,4 +19,10 @@ public partial class App : Application
         _tray?.Dispose();
         Shutdown();
     }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _tray?.Dispose();
+        base.OnExit(e);
+    }
 }

@@ -19,14 +19,29 @@ public sealed class ConfigStore : IConfigStore
 
     public AppConfig Load()
     {
-        if (!File.Exists(_path))
-            return new AppConfig(HideExplorerIcons: false, AutoStart: true, Fences: Array.Empty<FenceConfig>());
-        var json = File.ReadAllText(_path);
-        var cfg = JsonSerializer.Deserialize<AppConfig>(json, Options)
-                  ?? new AppConfig(Fences: Array.Empty<FenceConfig>());
-        return cfg with { Fences = cfg.Fences ?? Array.Empty<FenceConfig>() };
+        try
+        {
+            if (!File.Exists(_path))
+                return new AppConfig();
+            var json = File.ReadAllText(_path);
+            var cfg = JsonSerializer.Deserialize<AppConfig>(json, Options)
+                      ?? new AppConfig();
+            return cfg with { Fences = cfg.Fences ?? Array.Empty<FenceConfig>() };
+        }
+        catch (Exception ex) when (ex is JsonException or IOException)
+        {
+            // TODO M1: 接入日志框架记录 ex
+            return new AppConfig();
+        }
     }
 
-    public void Save(AppConfig config) =>
-        File.WriteAllText(_path, JsonSerializer.Serialize(config, Options));
+    public void Save(AppConfig config)
+    {
+        var dir = Path.GetDirectoryName(_path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var tmp = _path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(config, Options));
+        if (File.Exists(_path)) File.Replace(tmp, _path, destinationBackupFileName: null);
+        else File.Move(tmp, _path);
+    }
 }
