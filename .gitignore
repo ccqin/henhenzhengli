@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# SDD workflow scratch (briefs/reports/reviews/progress) — local only
+.superpowers/
