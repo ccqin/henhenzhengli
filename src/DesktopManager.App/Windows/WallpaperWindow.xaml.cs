@@ -31,11 +31,19 @@ public partial class WallpaperWindow : Window
 
     private static void SetExStyle(IntPtr hWnd, long value)
     {
+        // SetWindowLong(Ptr) 成功时不清 last-error slot，必须用「返回值为 0 且 error 非 0」双条件判失败，
+        // 否则 WPF 内部调用的残留错误码会让成功路径误抛 Win32Exception。返回 0 也可能是合法（前值就是 0）。
+        int err;
         if (IntPtr.Size == 8)
-            SetWindowLongPtr64(hWnd, GWL_EXSTYLE, new IntPtr(value));
+        {
+            IntPtr prev = SetWindowLongPtr64(hWnd, GWL_EXSTYLE, new IntPtr(value));
+            err = prev == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+        }
         else
-            SetWindowLong32(hWnd, GWL_EXSTYLE, (int)value);
-        int err = Marshal.GetLastWin32Error();
+        {
+            int prev = SetWindowLong32(hWnd, GWL_EXSTYLE, (int)value);
+            err = prev == 0 ? Marshal.GetLastWin32Error() : 0;
+        }
         if (err != 0) throw new Win32Exception(err);
     }
 
