@@ -56,9 +56,12 @@ public partial class IconLayerWindow : Window
             W = 180,
             H = 120
         });
+
+        // T6：画布空白右键 → 新建收纳盒。
+        IconCanvas.ContextMenu = BuildCanvasContextMenu();
     }
 
-    /// <summary>创建 FenceControl、Bind、加到画布、订阅归属事件。</summary>
+    /// <summary>创建 FenceControl、Bind、加到画布、订阅归属事件、挂右键菜单（重命名/删除）。</summary>
     private void CreateFence(FenceConfig config)
     {
         var fence = new FenceControl();
@@ -67,8 +70,73 @@ public partial class IconLayerWindow : Window
         Canvas.SetTop(fence, config.Y);
         fence.IconAdded += OnFenceIconAdded;
         fence.IconRemoved += OnFenceIconRemoved;
+        fence.ContextMenu = BuildFenceContextMenu(fence);
         _fences.Add(fence);
         IconCanvas.Children.Add(fence);
+    }
+
+    // ---------- T6：收纳盒右键（新建 / 删除 / 重命名） ----------
+
+    /// <summary>画布空白右键菜单（新建空 Fence）。只挂空白：FenceControl 和散落图标各自有 ContextMenu，不冒泡。</summary>
+    private ContextMenu BuildCanvasContextMenu()
+    {
+        var menu = new ContextMenu();
+        var miNew = new MenuItem { Header = "新建收纳盒" };
+        miNew.Click += (_, _) => CreateNewFence();
+        menu.Items.Add(miNew);
+        return menu;
+    }
+
+    /// <summary>FenceControl 右键菜单（重命名 / 删除本 Fence）。</summary>
+    private ContextMenu BuildFenceContextMenu(FenceControl fence)
+    {
+        var menu = new ContextMenu();
+        var miRename = new MenuItem { Header = "重命名" };
+        miRename.Click += (_, _) => fence.BeginRename();
+        var miDelete = new MenuItem { Header = "删除收纳盒" };
+        miDelete.Click += (_, _) => DeleteFence(fence);
+        menu.Items.Add(miRename);
+        menu.Items.Add(miDelete);
+        return menu;
+    }
+
+    /// <summary>新建空 Fence：Id 唯一（Guid 截断），坐标叠加偏移避开现有，加到 _fences + 画布。
+    /// 持久化留 T7；本任务只保证内存 _fences + UI 正确。</summary>
+    private void CreateNewFence()
+    {
+        var offset = _fences.Count * 30;
+        CreateFence(new FenceConfig
+        {
+            Id = Guid.NewGuid().ToString("N")[..8],
+            Title = "新收纳盒",
+            X = 120 + offset,
+            Y = 120 + offset,
+            W = 180,
+            H = 120
+        });
+    }
+
+    /// <summary>删除本 Fence：确认 → 从 _fences 移除 + 画布移除 + 取消订阅 + 清理 _fencedPaths（图标回散落区）→ 重渲。
+    /// 关键：该 Fence 的 IconFilePaths 从 _fencedPaths 移除前，先检查无其他 Fence 仍归属（防跨 Fence 单归属误删）。</summary>
+    private void DeleteFence(FenceControl fence)
+    {
+        var title = fence.BuildConfig().Title;
+        var r = MessageBox.Show(this, $"确定删除收纳盒 \"{title}\"？其内图标将回到散落区。",
+            "删除收纳盒", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (r != MessageBoxResult.OK) return;
+
+        var paths = fence.BuildConfig().IconFilePaths;
+        _fences.Remove(fence);
+        IconCanvas.Children.Remove(fence);
+        fence.IconAdded -= OnFenceIconAdded;
+        fence.IconRemoved -= OnFenceIconRemoved;
+        // 释放归属：该 Fence 的图标若无其他 Fence 仍持有，从 _fencedPaths 移除 → SetIcons 后回散落区。
+        foreach (var path in paths)
+        {
+            if (!_fences.Any(f => f.ContainsIcon(path)))
+                _fencedPaths.Remove(path);
+        }
+        SetIcons(_allItems); // 重渲散落区，被释放的图标回来
     }
 
     /// <summary>渲染散落图标列表（M1 单屏：简单网格排列，X/Y 来自 IconItem 或自动排）。

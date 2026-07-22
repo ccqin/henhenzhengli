@@ -234,6 +234,9 @@ public partial class FenceControl : UserControl
 
     // ---------- 标题编辑（双击进入；回车/失焦确认；Esc 取消） ----------
 
+    /// <summary>触发标题编辑（供宿主右键菜单「重命名」调用，与双击标题同一编辑流程）。</summary>
+    public void BeginRename() => BeginTitleEdit();
+
     private void BeginTitleEdit()
     {
         _isEditing = true;

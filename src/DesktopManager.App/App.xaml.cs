@@ -28,6 +28,9 @@ public partial class App : Application
             System.Diagnostics.Debug.WriteLine("上次异常退出，接管状态恢复中");
         }
         _recoveryGuard.TakeOver();
+        // I-3 自清理：接管成功（HideIcons 已设 1）后立即写 RunOnce 兜底。
+        // 放 try 之前：后续接线任何失败/崩溃都保留 RunOnce，下次登录 reg.exe 恢复 HideIcons=0（幂等无害）。
+        _recoveryGuard.SetSelfCleanupOnExit();
 
         // 2-4. 接线（图标层 / 同步 / explorer 重启 watcher）。任一抛异常必须回滚 HideIcons，
         // 否则 explorer 原生图标隐藏但 app 没起来 → 桌面空（风险登记册 #1，I-1）。
@@ -56,7 +59,7 @@ public partial class App : Application
             _shellWatcher.ExplorerRestarted += () => Dispatcher.BeginInvoke(new Action(() =>
             {
                 // TakeOver 抛异常会 marshal 回 UI 线程到 DispatcherUnhandledException → crash → 反触发桌面空（I-6）。
-                try { _recoveryGuard.TakeOver(); }
+                try { _recoveryGuard.TakeOver(); _recoveryGuard.SetSelfCleanupOnExit(); /* 重新接管后重写 RunOnce（场景4） */ }
                 catch (System.Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"ExplorerRestarted TakeOver 失败：{ex}");
@@ -82,7 +85,17 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _sync?.Dispose();
-        _recoveryGuard?.RestoreExplorer(); // 正常退出恢复 explorer 原生桌面图标
+        // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
+        // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 reg.exe 恢复，避免桌面永久空。
+        try
+        {
+            _recoveryGuard?.RestoreExplorer(); // 正常退出恢复 explorer 原生桌面图标
+            _recoveryGuard?.ClearSelfCleanup(); // 清 RunOnce 钩子（正常退出无需下次登录兜底）
+        }
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"OnExit RestoreExplorer/ClearSelfCleanup 失败，保留 RunOnce 兜底：{ex}");
+        }
         _tray?.Dispose();
         base.OnExit(e);
     }

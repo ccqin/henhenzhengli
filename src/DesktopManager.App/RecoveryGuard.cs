@@ -31,4 +31,10 @@ public sealed class RecoveryGuard
 
     /// <summary>恢复：让 explorer 原生桌面图标重新显示（正常退出调）。</summary>
     public void RestoreExplorer() => _detector.RestoreExplorer();
+
+    /// <summary>写 RunOnce 自清理兜底（I-3）：接管后调，崩溃未正常退出时下次登录自动恢复 HideIcons=0。</summary>
+    public void SetSelfCleanupOnExit() => RunOnceSelfCleanup.SetSelfCleanupOnExit();
+
+    /// <summary>清 RunOnce 自清理兜底（I-3）：正常退出调（RestoreExplorer 已恢复，钩子无需保留）。</summary>
+    public void ClearSelfCleanup() => RunOnceSelfCleanup.ClearSelfCleanup();
 }
