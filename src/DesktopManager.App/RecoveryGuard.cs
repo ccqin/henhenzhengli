@@ -1,0 +1,34 @@
+using DesktopManager.Core.Services;
+using DesktopManager.Native;
+
+namespace DesktopManager.App;
+
+/// <summary>
+/// 接管 explorer 桌面图标的薄壳：把 M0 的 DesktopIconVisibility（注册表 HideIcons）
+/// 包成 <see cref="Func{T}"/>/<see cref="Action{T}"/> 回调注入 Core 的 <see cref="RecoveryStateDetector"/>。
+/// 所有纯状态逻辑在 Core（已被单测覆盖）；本类只负责 Native 桥接。
+/// </summary>
+public sealed class RecoveryGuard
+{
+    private readonly RecoveryStateDetector _detector;
+
+    public RecoveryGuard()
+    {
+        _detector = new RecoveryStateDetector(
+            isHidden: DesktopIconVisibility.IsHidden,
+            setHidden: v =>
+            {
+                if (v) DesktopIconVisibility.HideDesktopIcons();
+                else DesktopIconVisibility.ShowDesktopIcons();
+            });
+    }
+
+    /// <summary>启动检测：若 HideIcons==1 表示上次接管过（可能崩溃，正常退出会恢复）。</summary>
+    public RecoveryState DetectState() => _detector.Detect();
+
+    /// <summary>接管：隐藏 explorer 原生桌面图标。</summary>
+    public void TakeOver() => _detector.TakeOver();
+
+    /// <summary>恢复：让 explorer 原生桌面图标重新显示（正常退出调）。</summary>
+    public void RestoreExplorer() => _detector.RestoreExplorer();
+}

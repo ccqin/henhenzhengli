@@ -21,6 +21,13 @@ public static class DesktopIconVisibility
     public static void HideDesktopIcons() => SetHidden(true);
     public static void ShowDesktopIcons() => SetHidden(false);
 
+    /// <summary>读取当前 HideIcons 注册表值。true=已隐藏（接管中），false=未隐藏或键不存在。</summary>
+    public static bool IsHidden()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(AdvancedKey);
+        return key?.GetValue(ValueName) is int v && v != 0;
+    }
+
     private static void SetHidden(bool hidden)
     {
         using var key = Registry.CurrentUser.CreateSubKey(AdvancedKey, writable: true);
