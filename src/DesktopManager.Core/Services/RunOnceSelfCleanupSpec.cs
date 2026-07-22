@@ -16,8 +16,14 @@ public static class RunOnceSelfCleanupSpec
     /// <summary>RunOnce 下用于自清理的值名。</summary>
     public const string ValueName = "DM_RestoreIcons";
 
-    /// <summary>explorer 桌面图标显隐的注册表键路径（与 <c>DesktopIconVisibility</c> 同目标）。</summary>
-    public const string AdvancedKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    /// <summary>
+    /// explorer 桌面图标显隐的注册表键路径（与 <c>DesktopIconVisibility</c> 同目标，但形式不同）。
+    /// **含 <c>HKCU\</c> 根键前缀**：本常量的唯一消费者是 <see cref="BuildRestoreCommand"/> 产出的 reg.exe 命令字符串，
+    /// reg.exe CLI 要求完整路径含根键前缀（无前缀则报「无效的项名称」退出非 0 → I-3 兜底失效 → 桌面永久空，致命）。
+    /// 注意：<c>DesktopManager.Native.DesktopIconVisibility</c> 的私有常量是**无前缀**形式（供
+    /// <c>Registry.CurrentUser.OpenSubKey</c>，基根由 CurrentUser 提供）；两者语义不同，勿混用。
+    /// </summary>
+    public const string AdvancedKeyPath = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
 
     /// <summary>HideIcons 值名。</summary>
     public const string HideIconsValueName = "HideIcons";

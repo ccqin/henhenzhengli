@@ -24,6 +24,8 @@ public class RunOnceSelfCleanupSpecTests
     [Fact]
     public void AdvancedKeyPath_MatchesExplorerAdvanced()
     {
+        // 必须含 HKCU 根键前缀：reg.exe CLI 要求完整路径，无前缀则命令失败（I-3 兜底失效→桌面永久空，致命）。
+        Assert.StartsWith(@"HKCU\", RunOnceSelfCleanupSpec.AdvancedKeyPath);
         Assert.EndsWith(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
             RunOnceSelfCleanupSpec.AdvancedKeyPath);
     }
@@ -48,6 +50,10 @@ public class RunOnceSelfCleanupSpecTests
 
         // reg.exe（Windows 自带，登录时由 RunOnce 执行）
         Assert.StartsWith("reg.exe ", cmd);
+        // **必须以 reg.exe add "HKCU\... 开头**：reg.exe CLI 要求键路径含根键前缀；
+        // 无 HKCU 前缀则报「无效的项名称」退出非 0 → RunOnce 钩子登录时执行失败 → I-3 兜底失效 → 桌面永久空（致命）。
+        // 此断言用字面量字符串而非 AdvancedKeyPath 常量自引用，才能真正抓住 HKCU 前缀缺失的回归。
+        Assert.StartsWith(@"reg.exe add ""HKCU\", cmd);
         // 目标值名
         Assert.Contains("HideIcons", cmd);
         // 写入 Advanced 键路径
