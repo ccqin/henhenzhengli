@@ -46,7 +46,11 @@ public partial class IconLayerWindow : Window
             Canvas.SetLeft(panel, x);
             Canvas.SetTop(panel, y);
             panel.Tag = item.FilePath;
-            panel.MouseLeftButtonDown += (_, _) => Open((string)panel.Tag);
+            panel.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e is MouseButtonEventArgs m && m.ClickCount >= 2)
+                    Open((string)panel.Tag);
+            };
             IconCanvas.Children.Add(panel);
 
             if (++col >= 10) { col = 0; row++; }
