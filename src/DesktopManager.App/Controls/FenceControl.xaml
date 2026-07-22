@@ -1,0 +1,52 @@
+<UserControl x:Class="DesktopManager.App.Controls.FenceControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 收纳盒：半透明黑底圆角，淡白描边。MinWidth/MinHeight 保证折叠/空盒仍可见可点 -->
+    <Border CornerRadius="6"
+            Background="#80000000"
+            BorderBrush="#40FFFFFF"
+            BorderThickness="1"
+            Padding="6"
+            MinWidth="120">
+        <StackPanel>
+            <!-- 顶栏=标题栏，整体可拖动；双击进入标题编辑（见 code-behind） -->
+            <Grid x:Name="HeaderBar"
+                  Background="Transparent"
+                  MouseLeftButtonDown="HeaderBar_MouseLeftButtonDown"
+                  MouseMove="HeaderBar_MouseMove"
+                  MouseLeftButtonUp="HeaderBar_MouseLeftButtonUp">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TitleText"
+                           Grid.Column="0"
+                           Text="Fence"
+                           Foreground="White"
+                           FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBox x:Name="TitleEdit"
+                         Grid.Column="0"
+                         Visibility="Collapsed"
+                         Background="#80000000"
+                         Foreground="White"
+                         BorderBrush="#40FFFFFF"
+                         CaretBrush="White"
+                         KeyDown="TitleEdit_KeyDown"
+                         LostFocus="TitleEdit_LostFocus" />
+                <Button x:Name="FoldButton"
+                        Grid.Column="1"
+                        Content="▾"
+                        Width="22"
+                        Height="22"
+                        Background="Transparent"
+                        Foreground="White"
+                        BorderThickness="0"
+                        Click="FoldButton_Click" />
+            </Grid>
+            <!-- 内容区：承载归属图标（T3 填充）；折叠时 Visibility=Collapsed -->
+            <WrapPanel x:Name="ContentArea" Margin="0,4,0,0" MinHeight="20" />
+        </StackPanel>
+    </Border>
+</UserControl>
