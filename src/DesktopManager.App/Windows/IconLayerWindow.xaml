@@ -4,9 +4,12 @@
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" Background="Transparent">
     <!-- 根画布：承载散落图标项 + FenceControl（T3 最小接线硬编码一个）。
-         AllowDrop=true 接收从 Fence 内容区拖出到空白的图标（data=FilePath）。 -->
+         AllowDrop=true 接收从 Fence 内容区拖出到空白的图标（data=FilePath）。
+         Background=Transparent：null 背景的 Canvas 不响应空白 hit-test，必须非 null 才能接收双击空白。 -->
     <Canvas x:Name="IconCanvas"
+            Background="Transparent"
             AllowDrop="True"
+            MouseLeftButtonDown="IconCanvas_MouseLeftButtonDown"
             DragOver="IconCanvas_DragOver"
             Drop="IconCanvas_Drop"/>
 </Window>

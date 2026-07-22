@@ -27,6 +27,10 @@ public partial class IconLayerWindow : Window
     private string? _iconDragPath;
     private Point _iconDragOrigin;
 
+    // ---------- T4：双击空白切可见性 ----------
+    // 全部散落图标 + 所有 FenceControl 的可见性开关。SetIcons 全量重渲时按此值设新元素 Visibility，保持隐藏状态跨重渲。
+    private bool _iconsVisible = true;
+
     public IconLayerWindow()
     {
         InitializeComponent();
@@ -72,8 +76,14 @@ public partial class IconLayerWindow : Window
     {
         _allItems = items;
         IconCanvas.Children.Clear();
+        // T4 协调：重 Add/重建的元素必须按当前 _iconsVisible 设 Visibility，否则 Sync/拖拽触发的重渲会把隐藏的图标冒回来。
+        var vis = _iconsVisible ? Visibility.Visible : Visibility.Collapsed;
         // FenceControl 实例状态（含 ContentArea 归属图标）在内存；Clear 只断开视觉树，重 Add 后保留。
-        foreach (var f in _fences) IconCanvas.Children.Add(f);
+        foreach (var f in _fences)
+        {
+            f.Visibility = vis;
+            IconCanvas.Children.Add(f);
+        }
 
         int col = 0, row = 0;
         foreach (var item in items)
@@ -99,6 +109,8 @@ public partial class IconLayerWindow : Window
             var panel = new StackPanel { Width = 80 };
             panel.Children.Add(img);
             panel.Children.Add(label);
+            // T4 协调：新建散落 panel 默认 Visible，隐藏状态下必须显式 Collapsed。
+            panel.Visibility = vis;
 
             double x = item.X > 0 ? item.X : 16 + col * 90;
             double y = item.Y > 0 ? item.Y : 16 + row * 96;
@@ -189,6 +201,26 @@ public partial class IconLayerWindow : Window
         // 若 path 不属于任何 Fence（散落图标拖到空白），无 owner，什么都不做。
         var owner = _fences.FirstOrDefault(f => f.ContainsIcon(path));
         owner?.RemoveIcon(path);
+        e.Handled = true;
+    }
+
+    // ---------- T4：双击画布空白切可见性 ----------
+
+    private void IconCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount < 2) return;
+        // hit-test：只有命中画布空白本身（OriginalSource 是 IconCanvas）才触发隐藏/显示。
+        // 点散落图标（StackPanel/Image/TextBlock）或 FenceControl 子元素时，OriginalSource 是这些子元素而非 Canvas，
+        // 不触发本逻辑（交给图标的 panel 双击 Open / 盒子的交互）。Background=Transparent 使空白可被命中（null 背景不响应）。
+        if (!ReferenceEquals(e.OriginalSource, IconCanvas)) return;
+        _iconsVisible = !_iconsVisible;
+        var vis = _iconsVisible ? Visibility.Visible : Visibility.Collapsed;
+        // IconCanvas 直接子元素只有散落图标 StackPanel 和 FenceControl；只切这两类，不触碰其他可能元素。
+        foreach (UIElement child in IconCanvas.Children)
+        {
+            if (child is StackPanel or FenceControl)
+                child.Visibility = vis;
+        }
         e.Handled = true;
     }
 
