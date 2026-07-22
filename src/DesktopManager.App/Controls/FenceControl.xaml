@@ -45,8 +45,14 @@
                         BorderThickness="0"
                         Click="FoldButton_Click" />
             </Grid>
-            <!-- 内容区：承载归属图标（T3 填充）；折叠时 Visibility=Collapsed -->
-            <WrapPanel x:Name="ContentArea" Margin="0,4,0,0" MinHeight="20" />
+            <!-- 内容区：承载归属图标（T3 填充）；折叠时 Visibility=Collapsed。
+                 AllowDrop=true 接收散落区拖入的图标（data=FilePath 字符串）。 -->
+            <WrapPanel x:Name="ContentArea"
+                       Margin="0,4,0,0"
+                       MinHeight="20"
+                       AllowDrop="True"
+                       DragOver="ContentArea_DragOver"
+                       Drop="ContentArea_Drop" />
         </StackPanel>
     </Border>
 </UserControl>

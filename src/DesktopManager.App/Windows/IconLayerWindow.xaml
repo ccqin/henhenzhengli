@@ -3,5 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" Background="Transparent">
-    <Canvas x:Name="IconCanvas"/>
+    <!-- 根画布：承载散落图标项 + FenceControl（T3 最小接线硬编码一个）。
+         AllowDrop=true 接收从 Fence 内容区拖出到空白的图标（data=FilePath）。 -->
+    <Canvas x:Name="IconCanvas"
+            AllowDrop="True"
+            DragOver="IconCanvas_DragOver"
+            Drop="IconCanvas_Drop"/>
 </Window>
