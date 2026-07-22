@@ -16,7 +16,7 @@ public class ConfigStoreTests
             {
                 HideExplorerIcons = true,
                 AutoStart = true,
-                Fences = new[] { new FenceConfig("f1", "Work", 10, 20, 300, 400) }
+                Fences = new[] { new FenceConfig { Id = "f1", Title = "Work", X = 10, Y = 20, W = 300, H = 400 } }
             };
 
             store.Save(config);
@@ -51,7 +51,7 @@ public class ConfigStoreTests
             {
                 HideExplorerIcons = true,
                 AutoStart = false,
-                Fences = new[] { new FenceConfig("f1", "工作收纳盒", 0, 0, 100, 100) }
+                Fences = new[] { new FenceConfig { Id = "f1", Title = "工作收纳盒", X = 0, Y = 0, W = 100, H = 100 } }
             };
 
             store.Save(config);
@@ -76,5 +76,63 @@ public class ConfigStoreTests
             Assert.Empty(loaded.Fences);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void Save_Load_RoundTrips_Fence_FoldedAndIconFilePaths()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            var store = new ConfigStore(path);
+            var config = new AppConfig
+            {
+                Fences = new[]
+                {
+                    new FenceConfig
+                    {
+                        Id = "f2",
+                        Title = "游戏",
+                        X = 12.5,
+                        Y = 34.75,
+                        W = 240,
+                        H = 180,
+                        Folded = true,
+                        IconFilePaths = new[] { @"C:\a.txt", @"C:\b.txt", @"C:\c.txt" }
+                    }
+                }
+            };
+
+            store.Save(config);
+            var loaded = store.Load();
+
+            Assert.Single(loaded.Fences);
+            var f = loaded.Fences[0];
+            Assert.Equal("f2", f.Id);
+            Assert.Equal("游戏", f.Title);
+            Assert.Equal(12.5, f.X);
+            Assert.Equal(34.75, f.Y);
+            Assert.Equal(240, f.W);
+            Assert.Equal(180, f.H);
+            Assert.True(f.Folded);
+            Assert.Equal(new[] { @"C:\a.txt", @"C:\b.txt", @"C:\c.txt" }, f.IconFilePaths);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void FenceConfig_Defaults_AreCorrect()
+    {
+        var f = new FenceConfig();
+
+        Assert.Equal("", f.Id);
+        Assert.Equal("", f.Title);
+        Assert.Equal(0, f.X);
+        Assert.Equal(0, f.Y);
+        Assert.Equal(180, f.W);
+        Assert.Equal(120, f.H);
+        Assert.False(f.Folded);
+        Assert.NotNull(f.IconFilePaths);
+        Assert.Empty(f.IconFilePaths);
     }
 }

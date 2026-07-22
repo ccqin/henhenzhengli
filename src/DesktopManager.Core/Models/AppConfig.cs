@@ -7,4 +7,14 @@ public record AppConfig
     public IReadOnlyList<FenceConfig> Fences { get; init; } = Array.Empty<FenceConfig>();
 }
 
-public record FenceConfig(string Id, string Title, int X, int Y, int W, int H);
+public record FenceConfig
+{
+    public string Id { get; init; } = "";
+    public string Title { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double W { get; init; } = 180;
+    public double H { get; init; } = 120;
+    public bool Folded { get; init; }
+    public IReadOnlyList<string> IconFilePaths { get; init; } = Array.Empty<string>();
+}
