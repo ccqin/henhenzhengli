@@ -16,8 +16,18 @@ public partial class IconLayerWindow : Window
 {
     private readonly IconExtractor _icons = new();
 
+    // ---------- T7：持久化 ----------
+    // 配置存储（App.OnStartup 注入）。Save 在 ThreadPool 线程做文件 IO；BuildConfig 在 UI 线程收集。
+    private readonly IConfigStore _store;
+    // 防抖定时器：变更后 500ms 无新触发才落盘。Change(dueTime, Infinite)：一次性触发，不重复。
+    private System.Threading.Timer? _saveTimer;
+    // 保护 Save 串行化（防抖回调与 SaveFencesNow 可能竞争同一文件写）。
+    private readonly object _saveLock = new();
+    private static readonly TimeSpan SaveDebounce = TimeSpan.FromMilliseconds(500);
+    private volatile bool _savingDisabled; // OnExit/Dispose 后不再后台写，避免退出竞态。
+
     // ---------- T3：归属划分 + 最小接线 ----------
-    // 当前所有 FenceControl 实例（T3 内存硬编码创建一个；T7 改从 ConfigStore 加载）。
+    // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
     // SetIcons 全量重渲时会 Clear IconCanvas，Fence 必须在 Clear 后重 Add 才不丢（实例状态在内存）。
     private readonly List<FenceControl> _fences = new();
     // 当前已归属任一 Fence 的 FilePath 集合，SetIcons 据此过滤散落区（避免归属图标重复显示）。
@@ -33,9 +43,11 @@ public partial class IconLayerWindow : Window
     // 全部散落图标 + 所有 FenceControl 的可见性开关。SetIcons 全量重渲时按此值设新元素 Visibility，保持隐藏状态跨重渲。
     private bool _iconsVisible = true;
 
-    public IconLayerWindow()
+    /// <param name="store">T7 注入的配置存储。null 仅用于设计器/极端场景（无持久化）。</param>
+    public IconLayerWindow(IConfigStore? store = null)
     {
         InitializeComponent();
+        _store = store ?? new NullConfigStore();
         SourceInitialized += (_, _) =>
         {
             // 铺主屏工作区（不含任务栏），避免遮挡任务栏。M3 多屏改按显示器工作区定位。
@@ -45,34 +57,55 @@ public partial class IconLayerWindow : Window
             WindowInterop.MakeNonInteractiveTopmost(hwnd); // 不点击穿透，可点图标
         };
 
-        // T3 最小接线：内存硬编码一个 FenceConfig → FenceControl 加到 IconCanvas，为拖拽提供宿主。
-        // T7 改为从 ConfigStore 加载 + 持久化（不在本任务）。
-        CreateFence(new FenceConfig
-        {
-            Id = "f1",
-            Title = "收纳盒",
-            X = 200,
-            Y = 200,
-            W = 180,
-            H = 120
-        });
+        // T7：启动防抖定时器（ThreadPool，一次性 due time）。
+        _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+        // T7：从 ConfigStore 加载 Fences（替换 T3 硬编码 f1）。
+        // 加载阶段用 LoadIcons（不触发 IconAdded，避免 N*M 次宿主重渲），_fencedPaths 在此直接初始化。
+        LoadFencesFromConfig();
 
         // T6：画布空白右键 → 新建收纳盒。
         IconCanvas.ContextMenu = BuildCanvasContextMenu();
     }
 
-    /// <summary>创建 FenceControl、Bind、加到画布、订阅归属事件、挂右键菜单（重命名/删除）。</summary>
-    private void CreateFence(FenceConfig config)
+    /// <summary>T7 加载：读 config.Fences → 逐个 CreateFence + LoadIcons + _fencedPaths 初始化。
+    /// 容错：IconFilePaths 里已被用户删除的 path 用 IconPathFilter 跳过；空配置不创建任何 Fence。</summary>
+    private void LoadFencesFromConfig()
     {
-        var fence = new FenceControl();
+        AppConfig config;
+        try { config = _store.Load(); }
+        catch (Exception ex)
+        {
+            // ConfigStore.Load 内部已兜底返回默认；这里再兜一层防 IConfigStore 实现抛异常 → 不阻塞启动。
+            System.Diagnostics.Debug.WriteLine($"LoadFencesFromConfig: Load 失败，空配置启动：{ex}");
+            config = new AppConfig();
+        }
+
+        foreach (var fc in config.Fences)
+        {
+            var fence = CreateFence(fc);
+            // 容错：跳过已不存在的 path（用户可能在 app 关闭后删除了文件）。
+            var existing = IconPathFilter.FilterExisting(fc.IconFilePaths);
+            fence.LoadIcons(existing); // 不触发 IconAdded，避免加载阶段重渲风暴
+            foreach (var p in existing) _fencedPaths.Add(p);
+        }
+    }
+
+    /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
+    /// T7：注入共享 IconExtractor；订阅 ConfigChanged → 防抖 Save。返回新创建的控件供调用方做加载期补充操作。</summary>
+    private FenceControl CreateFence(FenceConfig config)
+    {
+        var fence = new FenceControl { Icons = _icons }; // T7：跨 Fence 共享图标缓存
         fence.Bind(config);
         Canvas.SetLeft(fence, config.X);
         Canvas.SetTop(fence, config.Y);
         fence.IconAdded += OnFenceIconAdded;
         fence.IconRemoved += OnFenceIconRemoved;
+        fence.ConfigChanged += OnFenceConfigChanged; // T7：标题/折叠/拖动 → 防抖 Save
         fence.ContextMenu = BuildFenceContextMenu(fence);
         _fences.Add(fence);
         IconCanvas.Children.Add(fence);
+        return fence;
     }
 
     // ---------- T6：收纳盒右键（新建 / 删除 / 重命名） ----------
@@ -101,7 +134,7 @@ public partial class IconLayerWindow : Window
     }
 
     /// <summary>新建空 Fence：Id 唯一（Guid 截断），坐标叠加偏移避开现有，加到 _fences + 画布。
-    /// 持久化留 T7；本任务只保证内存 _fences + UI 正确。</summary>
+    /// T7：触发防抖持久化。</summary>
     private void CreateNewFence()
     {
         var offset = _fences.Count * 30;
@@ -114,6 +147,7 @@ public partial class IconLayerWindow : Window
             W = 180,
             H = 120
         });
+        SaveFencesDebounced(); // T7
     }
 
     /// <summary>删除本 Fence：确认 → 从 _fences 移除 + 画布移除 + 取消订阅 + 清理 _fencedPaths（图标回散落区）→ 重渲。
@@ -130,6 +164,7 @@ public partial class IconLayerWindow : Window
         IconCanvas.Children.Remove(fence);
         fence.IconAdded -= OnFenceIconAdded;
         fence.IconRemoved -= OnFenceIconRemoved;
+        fence.ConfigChanged -= OnFenceConfigChanged; // T7
         // 释放归属：该 Fence 的图标若无其他 Fence 仍持有，从 _fencedPaths 移除 → SetIcons 后回散落区。
         foreach (var path in paths)
         {
@@ -137,6 +172,7 @@ public partial class IconLayerWindow : Window
                 _fencedPaths.Remove(path);
         }
         SetIcons(_allItems); // 重渲散落区，被释放的图标回来
+        SaveFencesDebounced(); // T7
     }
 
     /// <summary>渲染散落图标列表（M1 单屏：简单网格排列，X/Y 来自 IconItem 或自动排）。
@@ -249,12 +285,103 @@ public partial class IconLayerWindow : Window
         }
         // 异步重渲散落区：不在 Drop 回调里同步改视觉树（避免事件源元素正被重渲的隐患，同 App.xaml.cs I-5 模式）。
         Dispatcher.BeginInvoke(new Action(() => SetIcons(_allItems)));
+        SaveFencesDebounced(); // T7：归属变化持久化
     }
 
     private void OnFenceIconRemoved(FenceControl fence, string filePath)
     {
         _fencedPaths.Remove(filePath);
         Dispatcher.BeginInvoke(new Action(() => SetIcons(_allItems)));
+        SaveFencesDebounced(); // T7
+    }
+
+    /// <summary>T7：FenceControl 标题/折叠/拖动坐标变化 → 防抖持久化。</summary>
+    private void OnFenceConfigChanged()
+    {
+        SaveFencesDebounced();
+    }
+
+    // ---------- T7：防抖持久化 ----------
+
+    /// <summary>防抖触发：500ms 内无新变更才落盘。每次调用重置计时器。
+    /// 触发点：①归属变化（OnFenceIconAdded/Removed）；②新建/删除 Fence；③FenceControl.ConfigChanged。</summary>
+    private void SaveFencesDebounced()
+    {
+        if (_savingDisabled) return;
+        var t = _saveTimer;
+        if (t is null) return;
+        // Change(dueTime, period)：dueTime=500ms 后触发一次，period=Infinite 不重复。每次调用重置 dueTime → 防抖。
+        lock (_saveLock)
+        {
+            t.Change(SaveDebounce, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>Timer 回调（ThreadPool 线程）：收集 BuildConfig（须 UI 线程）→ Save（文件 IO，任意线程）。
+    /// 线程安全：BuildConfig 经 Dispatcher.Invoke 在 UI 线程读 Canvas 附加属性；Save 经 _saveLock 串行化。</summary>
+    private void OnSaveTimerElapsed()
+    {
+        if (_savingDisabled) return;
+        try
+        {
+            // Dispatcher.Invoke 同步回 UI 线程收集（BuildConfig 读 Canvas.GetLeft/Top + ActualWidth/Height）。
+            // 收集在 UI 线程做（快，无文件 IO）；结果带回 ThreadPool 线程做文件写。
+            AppConfig appConfig;
+            if (Dispatcher.CheckAccess())
+                appConfig = BuildAppConfigForSave();
+            else
+                appConfig = (AppConfig)Dispatcher.Invoke(new Func<AppConfig>(BuildAppConfigForSave));
+
+            lock (_saveLock)
+            {
+                if (_savingDisabled) return;
+                _store.Save(appConfig); // ConfigStore: 原子 tmp + File.Replace，线程安全
+            }
+        }
+        catch (Exception ex)
+        {
+            // 持久化失败不应崩 UI（同 ConfigStore 异常兜底理念）。下次变更会再触发重试。
+            System.Diagnostics.Debug.WriteLine($"防抖保存失败：{ex}");
+        }
+    }
+
+    /// <summary>收集当前 _fences 状态为 AppConfig（纯 UI 线程逻辑，供防抖回调和 OnExit 共用）。</summary>
+    private AppConfig BuildAppConfigForSave()
+    {
+        var fences = _fences.Select(f => f.BuildConfig()).ToList();
+        return new AppConfig { Fences = fences };
+    }
+
+    /// <summary>立即保存（不等防抖）。OnExit 调用，确保退出时布局落盘。
+    /// 必须在 UI 线程调（OnExit 是 UI 线程）。先停掉待触发的防抖定时器，再同步收集 + Save。
+    /// 与待执行的防抖回调通过 _saveLock + _savingDisabled 串行/短路，避免退出竞态丢最后一次写。</summary>
+    public void SaveFencesNow()
+    {
+        // 停掉待触发的防抖定时器（已 in-flight 的回调由 _savingDisabled + lock 兜底）。
+        _savingDisabled = true;
+        try { _saveTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
+        catch { /* 释放中可能抛 ObjectDisposedException，忽略 */ }
+
+        try
+        {
+            var appConfig = BuildAppConfigForSave(); // 已在 UI 线程
+            lock (_saveLock)
+            {
+                _store.Save(appConfig);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 退出保存失败不阻塞 RestoreExplorer/ClearSelfCleanup（OnExit 兜底）。
+            System.Diagnostics.Debug.WriteLine($"退出保存失败：{ex}");
+        }
+    }
+
+    /// <summary>设计器/极端场景（未注入 store）的 no-op 实现，避免 null 检查散落。</summary>
+    private sealed class NullConfigStore : IConfigStore
+    {
+        public AppConfig Load() => new AppConfig();
+        public void Save(AppConfig config) { /* no-op */ }
     }
 
     // ---------- T3：画布空白 Drop（从 Fence 内容区拖出到空白） ----------

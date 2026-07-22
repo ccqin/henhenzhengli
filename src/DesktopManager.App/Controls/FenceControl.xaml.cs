@@ -25,8 +25,9 @@ public partial class FenceControl : UserControl
     private double _startTop;      // 按下时控件在父 Canvas 的 Top
 
     // ---------- T3：归属图标渲染 ----------
-    // 内部独立 IconExtractor（缓存不跨控件共享；T7 接线时可改由宿主注入共享实例）。
-    private readonly IconExtractor _icons = new();
+    // T7：IconExtractor 改为可由宿主注入共享实例（跨 Fence 共用一份图标缓存）。
+    // 保留默认 new() 兼容 XAML 设计器/独立 spike 场景；宿主接线时在 Bind 前 set。
+    private IconExtractor _icons = new();
     // FilePath → 内容区图标 UI 元素，用于去重 / O(1) 移除。
     private readonly Dictionary<string, FrameworkElement> _contentIcons = new(StringComparer.OrdinalIgnoreCase);
     // 内容图标拖出候选状态（移动阈值检测，与散落区图标拖出同模式）。
@@ -39,12 +40,24 @@ public partial class FenceControl : UserControl
     /// <summary>图标被移出本 Fence（拖出到画布空白）。参数=本控件 + 被移出图标 FilePath。</summary>
     public event Action<FenceControl, string>? IconRemoved;
 
+    /// <summary>T7：本 Fence 的可持久化状态发生变化（标题/折叠/拖动坐标）时触发。
+    /// 宿主订阅以触发防抖 Save。不在 IconAdded/Removed 触发（宿主归属回调里自己 Save）。</summary>
+    public event Action? ConfigChanged;
+
+    /// <summary>T7：共享 IconExtractor（宿主注入，跨 Fence 共用一份图标缓存）。</summary>
+    public IconExtractor Icons
+    {
+        get => _icons;
+        set => _icons = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
     public FenceControl()
     {
         InitializeComponent();
     }
 
-    /// <summary>把 FenceConfig 映射到 UI（标题/折叠态）。坐标/尺寸定位留给 T7 宿主（Canvas.SetLeft/Top）。</summary>
+    /// <summary>把 FenceConfig 映射到 UI（标题/折叠态/尺寸 W/H）。
+    /// 坐标定位（Canvas.SetLeft/Top）留给宿主；本方法只设控件自身属性。</summary>
     public void Bind(FenceConfig config)
     {
         _config = config;
@@ -53,9 +66,14 @@ public partial class FenceControl : UserControl
         TitleText.Text = _title;
         ContentArea.Visibility = _folded ? Visibility.Collapsed : Visibility.Visible;
         FoldButton.Content = _folded ? "▸" : "▾";
+        // T7：应用尺寸 W/H（>0 才覆盖；保留 XAML MinWidth 兜底）。
+        // 折叠交互：只切 ContentArea.Visibility，不动控件 Height —— 盒子高度恒定，内容隐藏其内，
+        // 行为可预测（Fences 风格），避免折叠后 BuildConfig 读到压缩的 ActualHeight 写回丢失展开尺寸。
+        if (config.W > 0) Width = config.W;
+        if (config.H > 0) Height = config.H;
     }
 
-    /// <summary>返回反映当前 UI 状态（拖动后坐标、折叠态、标题）的 FenceConfig，供 T7 持久化。</summary>
+    /// <summary>返回反映当前 UI 状态（拖动后坐标、折叠态、标题、尺寸）的 FenceConfig，供 T7 持久化。</summary>
     public FenceConfig BuildConfig()
     {
         var x = Canvas.GetLeft(this);
@@ -66,7 +84,27 @@ public partial class FenceControl : UserControl
             Folded = _folded,
             X = double.IsNaN(x) ? _config.X : x,
             Y = double.IsNaN(y) ? _config.Y : y,
+            // T7：读回控件实际尺寸（ActualWidth/Height 在 Measure 后有效；未挂画布时 NaN → 保留旧值）。
+            W = !double.IsNaN(ActualWidth) && ActualWidth > 0 ? ActualWidth : _config.W,
+            H = !double.IsNaN(ActualHeight) && ActualHeight > 0 ? ActualHeight : _config.H,
         };
+    }
+
+    /// <summary>T7 加载入口：批量渲染归属图标 + 维护 _config.IconFilePaths / _contentIcons，
+    /// **不触发 IconAdded**（避免加载 N 个 Fence 各 M 图标时触发 N*M 次宿主重渲风暴）。
+    /// 宿主在加载阶段自己初始化 _fencedPaths，不依赖事件回调。路径应已由宿主用 IconPathFilter 过滤容错。</summary>
+    public void LoadIcons(IEnumerable<string> filePaths)
+    {
+        foreach (var filePath in filePaths)
+        {
+            if (string.IsNullOrEmpty(filePath)) continue;
+            if (_contentIcons.ContainsKey(filePath)) continue; // 去重
+            var element = BuildContentIcon(filePath);
+            _contentIcons[filePath] = element;
+            ContentArea.Children.Add(element);
+        }
+        // 一次性同步 _config.IconFilePaths（与去重后的 _contentIcons 一致），不触发事件。
+        _config = _config with { IconFilePaths = _contentIcons.Keys.ToList() };
     }
 
     // ---------- T3：归属图标增删 / 渲染 / 查询 ----------
@@ -221,6 +259,8 @@ public partial class FenceControl : UserControl
         _isDragging = false;
         HeaderBar.ReleaseMouseCapture();
         e.Handled = true;
+        // T7：拖动结束 → 坐标变化 → 通知宿主持久化。
+        ConfigChanged?.Invoke();
     }
 
     // ---------- 折叠 ----------
@@ -230,6 +270,8 @@ public partial class FenceControl : UserControl
         _folded = !_folded;
         ContentArea.Visibility = _folded ? Visibility.Collapsed : Visibility.Visible;
         FoldButton.Content = _folded ? "▸" : "▾";
+        // T7：折叠态变化 → 通知宿主持久化。
+        ConfigChanged?.Invoke();
     }
 
     // ---------- 标题编辑（双击进入；回车/失焦确认；Esc 取消） ----------
@@ -275,6 +317,8 @@ public partial class FenceControl : UserControl
         _title = TitleEdit.Text;
         TitleText.Text = _title;
         EndTitleEdit();
+        // T7：标题确认变化 → 通知宿主持久化。（LostFocus 也会走这里；_isEditing 守卫保证只在真编辑后触发一次。）
+        ConfigChanged?.Invoke();
     }
 
     private void CancelTitleEdit()

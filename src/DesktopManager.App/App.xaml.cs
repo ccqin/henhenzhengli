@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using DesktopManager.Core.Services;
 using DesktopManager.App.Windows;
@@ -12,6 +13,11 @@ public partial class App : Application
     private IconLayerWindow? _iconLayer;
     private DesktopSync? _sync;
     private ShellRestartWatcher? _shellWatcher;
+
+    /// <summary>T7 配置文件路径：%AppData%\DesktopManager\config.json（与 I-3 RunOnce 同属用户级状态目录）。</summary>
+    private static string GetConfigPath()
+        => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "DesktopManager", "config.json");
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -36,8 +42,10 @@ public partial class App : Application
         // 否则 explorer 原生图标隐藏但 app 没起来 → 桌面空（风险登记册 #1，I-1）。
         try
         {
+            // T7：创建 ConfigStore（原子写 + 异常兜底），注入 IconLayerWindow（加载 Fences + 防抖 Save）。
+            var configStore = new ConfigStore(GetConfigPath());
             // 2. 图标层窗口（不点击穿透，可点图标）
-            _iconLayer = new IconLayerWindow();
+            _iconLayer = new IconLayerWindow(configStore);
             _iconLayer.Show();
             var iconHwnd = new System.Windows.Interop.WindowInteropHelper(_iconLayer).Handle;
 
@@ -84,6 +92,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // T7：立即保存布局（不等防抖），确保退出时 Fences 布局/归属/折叠态落盘。
+        // 放 _sync.Dispose / RestoreExplorer 之前：保存是 app 职责的核心数据，优先级最高。
+        // 保存失败不阻塞后续恢复流程（SaveFencesNow 内部 try/catch）。
+        try { _iconLayer?.SaveFencesNow(); }
+        catch (System.Exception ex) { System.Diagnostics.Debug.WriteLine($"OnExit SaveFencesNow 失败：{ex}"); }
+
         _sync?.Dispose();
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 reg.exe 恢复，避免桌面永久空。
