@@ -88,6 +88,17 @@ public partial class FenceControl : UserControl
     /// 移除 UI + 维护 _config.IconFilePaths + 触发 IconRemoved。</summary>
     public void RemoveIcon(string filePath)
     {
+        if (!_contentIcons.ContainsKey(filePath)) return; // 不存在不触发事件
+        RemoveIconSilent(filePath);
+        IconRemoved?.Invoke(this, filePath);
+    }
+
+    /// <summary>从本 Fence 内容区**静默**移除图标（不触发 IconRemoved）。
+    /// 供宿主在跨 Fence 迁移时整理原 owner：拖入新 Fence 后，把 path 从其他仍含它的 Fence 移除。
+    /// 关键：不触发 IconRemoved → 不会触发宿主 OnFenceIconRemoved → 不会把 path 从 _fencedPaths 移除
+    ///（此时新 owner Fence 仍拥有该 path，_fencedPaths 必须保留它）。否则会错误丢失归属。</summary>
+    public void RemoveIconSilent(string filePath)
+    {
         if (!_contentIcons.TryGetValue(filePath, out var element)) return;
         ContentArea.Children.Remove(element);
         _contentIcons.Remove(filePath);
@@ -97,7 +108,6 @@ public partial class FenceControl : UserControl
                 .Where(p => !string.Equals(p, filePath, StringComparison.OrdinalIgnoreCase))
                 .ToList()
         };
-        IconRemoved?.Invoke(this, filePath);
     }
 
     /// <summary>本 Fence 是否已归属该 FilePath（供宿主在画布空白 Drop 时定位 owner）。</summary>

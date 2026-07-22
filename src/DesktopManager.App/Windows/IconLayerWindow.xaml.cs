@@ -110,12 +110,23 @@ public partial class IconLayerWindow : Window
                 // 双击 Open（保留 M1 行为）；单击 arm 拖拽候选。双击不 arm，避免双击后误触发拖拽。
                 if (e is MouseButtonEventArgs m && m.ClickCount >= 2)
                 {
+                    // review-finding 1：双击 = 两次 down，第一次(ClickCount=1)已 arm。
+                    // 若不清零，双击第二次 down 后保持按住并移动 → MouseMove 满足 armed+Pressed+超阈值 → 误触 DoDragDrop。
+                    _iconDragArmed = false;
+                    _iconDragPath = null;
                     Open((string)panel.Tag);
                     return;
                 }
                 _iconDragArmed = true;
                 _iconDragPath = (string)panel.Tag;
                 _iconDragOrigin = e.GetPosition(this);
+            };
+            // review-finding 2：单击松手未移动 → 清 armed（与 FenceControl 内容图标 img.MouseLeftButtonUp 对称，
+            // 避免 armed 残留到下次 down 叠加误触）。
+            panel.MouseLeftButtonUp += (_, _) =>
+            {
+                _iconDragArmed = false;
+                _iconDragPath = null;
             };
             // 拖出：左键按下且移动超阈值 → DoDragDrop（data=FilePath 字符串，DragDropEffects.Move）。
             panel.MouseMove += (_, e) =>
@@ -143,6 +154,15 @@ public partial class IconLayerWindow : Window
     private void OnFenceIconAdded(FenceControl fence, string filePath)
     {
         _fencedPaths.Add(filePath);
+        // review-finding 3：跨 Fence 迁移防双重归属。拖入本 fence 后，若 path 仍属其他 Fence（如从 A 拖到 B），
+        // 把它从那些 Fence **静默**移除（RemoveIconSilent 不触发 IconRemoved）。
+        // 关键时序：若用普通 RemoveIcon 会触发 OnFenceIconRemoved → _fencedPaths.Remove(filePath)，
+        // 但此时新 owner fence 仍拥有 filePath，_fencedPaths 必须保留它 → 会错误丢失归属。
+        // 静默移除只清原 owner 的 _contentIcons/_config/UI，不影响 _fencedPaths，保证 path 最终单归属且 _fencedPaths 含 path。
+        foreach (var other in _fences.Where(f => f != fence && f.ContainsIcon(filePath)))
+        {
+            other.RemoveIconSilent(filePath);
+        }
         // 异步重渲散落区：不在 Drop 回调里同步改视觉树（避免事件源元素正被重渲的隐患，同 App.xaml.cs I-5 模式）。
         Dispatcher.BeginInvoke(new Action(() => SetIcons(_allItems)));
     }
