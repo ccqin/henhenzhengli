@@ -32,15 +32,24 @@ public sealed class DesktopSync : IDisposable
 
     private void Reconcile()
     {
-        DesktopDiff? diff = null;
-        lock (_lock)
+        // 整体 try/catch：防 Capture/Diff 抛异常（IO 瞬时失败/权限丢失）→ FSW 回调停止 / Timer 停转（I-4）。
+        // 不重抛：watcher 与 Timer 继续工作，单次失败不致 sync 静默失活。
+        try
         {
-            var latest = _snapshot.Capture();
-            diff = DesktopDiff.Diff(_current, latest);
-            if (diff.Added.Count == 0 && diff.Removed.Count == 0) return;
-            _current = latest;
+            DesktopDiff? diff = null;
+            lock (_lock)
+            {
+                var latest = _snapshot.Capture();
+                diff = DesktopDiff.Diff(_current, latest);
+                if (diff.Added.Count == 0 && diff.Removed.Count == 0) return;
+                _current = latest;
+            }
+            Changed?.Invoke(this, diff);
         }
-        Changed?.Invoke(this, diff);
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"DesktopSync.Reconcile 失败：{ex}");
+        }
     }
 
     public void Dispose()
