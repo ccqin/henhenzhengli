@@ -44,46 +44,40 @@ public class RunOnceSelfCleanupSpecTests
     }
 
     [Fact]
-    public void BuildRestoreCommand_UsesRegExeAndTargetsHideIcons()
+    public void BuildRestoreCommand_Produces_Quoted_AppPath_With_RestoreIcons_Flag()
     {
-        var cmd = RunOnceSelfCleanupSpec.BuildRestoreCommand();
+        var cmd = RunOnceSelfCleanupSpec.BuildRestoreCommand(@"C:\Program Files\DesktopManager\app.exe");
 
-        // reg.exe（Windows 自带，登录时由 RunOnce 执行）
-        Assert.StartsWith("reg.exe ", cmd);
-        // **必须以 reg.exe add "HKCU\... 开头**：reg.exe CLI 要求键路径含根键前缀；
-        // 无 HKCU 前缀则报「无效的项名称」退出非 0 → RunOnce 钩子登录时执行失败 → I-3 兜底失效 → 桌面永久空（致命）。
-        // 此断言用字面量字符串而非 AdvancedKeyPath 常量自引用，才能真正抓住 HKCU 前缀缺失的回归。
-        Assert.StartsWith(@"reg.exe add ""HKCU\", cmd);
-        // 目标值名
-        Assert.Contains("HideIcons", cmd);
-        // 写入 Advanced 键路径
-        Assert.Contains(RunOnceSelfCleanupSpec.AdvancedKeyPath, cmd);
-        // 类型 REG_DWORD
-        Assert.Contains("REG_DWORD", cmd);
-        // 强制覆盖 /f
-        Assert.Contains("/f", cmd);
-        // 值 0
-        Assert.Contains("/d 0", cmd);
-        // add 子命令
-        Assert.Contains(" add ", cmd);
-        // /v 指定值名
-        Assert.Contains("/v HideIcons", cmd);
+        // C1：RunOnce 值现在是启动 app --restore-icons 模式（含 WM_SETTINGCHANGE 广播），而非 reg.exe。
+        // 字面量断言（非自引用）确保 --restore-icons 标志真的在命令里——
+        // 缺了它 app 会走正常接管路径而非恢复后退出 → I-3 致命项时序依赖未消除。
+        Assert.Contains("--restore-icons", cmd);
+        // 路径必须用引号包裹（含空格路径如 Program Files 不引用会被 RunOnce 解析截断）
+        Assert.Contains("\"", cmd);
+    }
+
+    [Fact]
+    public void BuildRestoreCommand_QuotesAppPathWithSpaces()
+    {
+        // 含空格路径必须出现在引号内（"C:\Program Files\DM\app.exe"），否则 RunOnce 启动时路径被截断
+        var cmd = RunOnceSelfCleanupSpec.BuildRestoreCommand(@"C:\Program Files\DM\app.exe");
+        Assert.Contains("\"C:\\Program Files\\DM\\app.exe\"", cmd);
+    }
+
+    [Fact]
+    public void BuildRestoreCommand_StartsWith_Quoted_AppPath_Followed_By_Flag()
+    {
+        // 完整格式："<appPath>" --restore-icons
+        var cmd = RunOnceSelfCleanupSpec.BuildRestoreCommand(@"D:\tools\app.exe");
+        Assert.StartsWith("\"D:\\tools\\app.exe\" --restore-icons", cmd);
     }
 
     [Fact]
     public void BuildRestoreCommand_IsDeterministicAndStable()
     {
-        // 覆盖式重写每次启动调用，命令须稳定（便于每次启动幂等覆盖）
-        var a = RunOnceSelfCleanupSpec.BuildRestoreCommand();
-        var b = RunOnceSelfCleanupSpec.BuildRestoreCommand();
+        // 覆盖式重写每次启动调用，同路径命令须稳定（便于每次启动幂等覆盖）
+        var a = RunOnceSelfCleanupSpec.BuildRestoreCommand(@"C:\app.exe");
+        var b = RunOnceSelfCleanupSpec.BuildRestoreCommand(@"C:\app.exe");
         Assert.Equal(a, b);
-    }
-
-    [Fact]
-    public void BuildRestoreCommand_PathIsQuoted()
-    {
-        // 路径含空格（CurrentVersion 等），reg.exe 要求引号包裹
-        var cmd = RunOnceSelfCleanupSpec.BuildRestoreCommand();
-        Assert.Contains($"\"{RunOnceSelfCleanupSpec.AdvancedKeyPath}\"", cmd);
     }
 }

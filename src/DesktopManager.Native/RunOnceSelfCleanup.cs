@@ -8,7 +8,8 @@ namespace DesktopManager.Native;
 /// I-3 自清理的注册表读写实现：在 HKCU RunOnce 键下写/删 <see cref="RunOnceSelfCleanupSpec.ValueName"/>。
 ///
 /// 时序契约（见 brief 场景核对）：
-/// - app 接管后调 <see cref="SetSelfCleanupOnExit"/> 写 RunOnce；下次登录 Windows 自动执行 reg.exe 恢复 HideIcons=0。
+/// - app 接管后调 <see cref="SetSelfCleanupOnExit"/> 写 RunOnce（= 启动 app --restore-icons 模式命令）；下次登录
+///   Windows 自动执行该命令 → app 调 ShowDesktopIcons（含 WM_SETTINGCHANGE 广播）恢复 HideIcons=0（消除时序依赖）。
 /// - app 正常退出调 <see cref="ClearSelfCleanup"/> 删 RunOnce（RestoreExplorer 已恢复 HideIcons=0，钩子无需保留）。
 /// - app 崩溃/被杀（OnExit 未跑）→ RunOnce 保留 → 下次登录自动恢复（兜底核心）。
 ///
@@ -16,20 +17,29 @@ namespace DesktopManager.Native;
 /// </summary>
 public static class RunOnceSelfCleanup
 {
-    /// <summary>写 RunOnce 兜底值（覆盖式）。接管后调；每次启动重写以保证最新命令（场景4）。</summary>
+    /// <summary>写 RunOnce 兜底值（覆盖式）。接管后调；每次启动重写以保证最新命令（场景4）。
+    /// RunOnce 值内容 = 启动 <c>app.exe --restore-icons</c>（appPath 来自 <see cref="Environment.ProcessPath"/>）。</summary>
     public static void SetSelfCleanupOnExit()
     {
         try
         {
+            var appPath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(appPath))
+            {
+                // 理论兜底：ProcessPath 在某些托管启动场景可能为 null。无路径无法构造 --restore-icons 命令 → 跳过。
+                Debug.WriteLine("SetSelfCleanupOnExit：Environment.ProcessPath 为空，无法构造 --restore-icons 命令，跳过 RunOnce 写入（I-3 兜底未生效）。");
+                return;
+            }
             using var key = Registry.CurrentUser.CreateSubKey(RunOnceSelfCleanupSpec.RunOnceKeyPath, writable: true);
             key.SetValue(RunOnceSelfCleanupSpec.ValueName,
-                RunOnceSelfCleanupSpec.BuildRestoreCommand(),
+                RunOnceSelfCleanupSpec.BuildRestoreCommand(appPath),
                 RegistryValueKind.String);
         }
         catch (Exception ex)
         {
-            // 权限丢失/键损坏：不崩 app；记录便于诊断。兜底失败 = 失去 I-3 兜底能力，但主流程仍正常。
-            Debug.WriteLine($"SetSelfCleanupOnExit 失败：{ex}");
+            // 权限丢失/键损坏：不崩 app（内部兜底不阻断启动）。但 I-3 兜底未生效 = 若此时 app 崩溃 →
+            // 下次登录桌面图标可能仍空（无 RunOnce 触发 --restore-icons）。真机验收用 reg query 确认 RunOnce 真写入。
+            Debug.WriteLine($"SetSelfCleanupOnExit 失败（I-3 兜底未生效，若崩溃下次登录桌面可能空）：{ex}");
         }
     }
 

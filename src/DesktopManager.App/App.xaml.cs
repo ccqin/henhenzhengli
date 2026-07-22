@@ -22,6 +22,31 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // C1（I-3 致命项）：--restore-icons 模式。RunOnce 触发的崩溃恢复路径。
+        // 最早期检测（在 tray/window 创建之前）：调 RestoreExplorer（= ShowDesktopIcons，含 WM_SETTINGCHANGE 广播）
+        // → HideIcons=0 且广播刷新 explorer → 桌面图标恢复 → Shutdown 退出。
+        // 广播消除 RunOnce/explorer 时序依赖（无论 explorer 是否已读 HideIcons=1 都会刷新）。
+        // **此模式绝不接管、不建窗口、不跑 sync**——只恢复后退出。
+        if (e.Args.Length > 0 && Array.IndexOf(e.Args, "--restore-icons") >= 0)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("--restore-icons 模式：恢复桌面图标（含 WM_SETTINGCHANGE 广播）后退出。");
+                var restoreGuard = new RecoveryGuard();
+                restoreGuard.RestoreExplorer();
+            }
+            catch (System.Exception ex)
+            {
+                // 恢复失败也退出（不接管）；最坏情况下次正常启动会再 DetectState/Restore。
+                System.Diagnostics.Debug.WriteLine($"--restore-icons 恢复失败：{ex}");
+            }
+            // ShutdownMode=OnExplicitShutdown（App.xaml）：显式 Shutdown 才退出。
+            // 此分支未创建任何 window/tray，OnExit 里 _iconLayer/_sync/_tray/_recoveryGuard 字段全 null，全 ?. no-op，安全。
+            Shutdown();
+            return;
+        }
+
         _tray = (TaskbarIcon)FindResource("TrayIcon");
         _tray.ForceCreate();
 
@@ -33,10 +58,22 @@ public partial class App : Application
         {
             System.Diagnostics.Debug.WriteLine("上次异常退出，接管状态恢复中");
         }
-        _recoveryGuard.TakeOver();
-        // I-3 自清理：接管成功（HideIcons 已设 1）后立即写 RunOnce 兜底。
-        // 放 try 之前：后续接线任何失败/崩溃都保留 RunOnce，下次登录 reg.exe 恢复 HideIcons=0（幂等无害）。
-        _recoveryGuard.SetSelfCleanupOnExit();
+        // I1：TakeOver + SetSelfCleanupOnExit 包 try/catch。
+        // - TakeOver 部分成功（HideIcons 已设 1）后抛 → catch 回滚 RestoreExplorer（HideIcons 恢复 0，含广播）→ rethrow 走 WPF 未处理流程，
+        //   避免桌面空（reviewer 关切：接管半成功后抛未回滚）。
+        // - SetSelfCleanupOnExit 内部已 try/catch 吞异常（不阻断启动），外层兜其包装/未知失败。
+        try
+        {
+            _recoveryGuard.TakeOver();
+            // I-3 自清理：接管成功（HideIcons 已设 1）后立即写 RunOnce 兜底（= 启动 app --restore-icons 命令）。
+            // 后续接线任何失败/崩溃都保留 RunOnce，下次登录 app 广播恢复 HideIcons=0（幂等无害）。
+            _recoveryGuard.SetSelfCleanupOnExit();
+        }
+        catch (System.Exception)
+        {
+            try { _recoveryGuard.RestoreExplorer(); } catch { /* 回滚失败则尽力，不再升级 */ }
+            throw;
+        }
 
         // 2-4. 接线（图标层 / 同步 / explorer 重启 watcher）。任一抛异常必须回滚 HideIcons，
         // 否则 explorer 原生图标隐藏但 app 没起来 → 桌面空（风险登记册 #1，I-1）。
@@ -100,7 +137,7 @@ public partial class App : Application
 
         _sync?.Dispose();
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
-        // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 reg.exe 恢复，避免桌面永久空。
+        // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。
         try
         {
             _recoveryGuard?.RestoreExplorer(); // 正常退出恢复 explorer 原生桌面图标

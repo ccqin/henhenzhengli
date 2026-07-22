@@ -83,11 +83,21 @@ public partial class IconLayerWindow : Window
 
         foreach (var fc in config.Fences)
         {
-            var fence = CreateFence(fc);
-            // 容错：跳过已不存在的 path（用户可能在 app 关闭后删除了文件）。
-            var existing = IconPathFilter.FilterExisting(fc.IconFilePaths);
-            fence.LoadIcons(existing); // 不触发 IconAdded，避免加载阶段重渲风暴
-            foreach (var p in existing) _fencedPaths.Add(p);
+            // I3：per-fence try/catch。单个坏 Fence（图标提取失败/Bind 异常/路径非法等）不中断其余加载，
+            // 与 ConfigStore.Load 容错理念一致。坏 Fence 跳过，其余照常创建。
+            try
+            {
+                var fence = CreateFence(fc);
+                // 容错：跳过已不存在的 path（用户可能在 app 关闭后删除了文件）。
+                var existing = IconPathFilter.FilterExisting(fc.IconFilePaths);
+                fence.LoadIcons(existing); // 不触发 IconAdded，避免加载阶段重渲风暴
+                foreach (var p in existing) _fencedPaths.Add(p);
+            }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"LoadFencesFromConfig：Fence {fc?.Id} 加载失败，跳过该 Fence（其余继续）：{ex}");
+                continue;
+            }
         }
     }
 
