@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -6,6 +7,7 @@ using System.Windows.Media;
 using DesktopManager.App.Controls;
 using DesktopManager.App.Services;
 using DesktopManager.Core.Models;
+using DesktopManager.Core.Services;
 using DesktopManager.Native;
 
 namespace DesktopManager.App.Windows;
@@ -117,6 +119,8 @@ public partial class IconLayerWindow : Window
             Canvas.SetLeft(panel, x);
             Canvas.SetTop(panel, y);
             panel.Tag = item.FilePath;
+            // T5：散落图标右键菜单（四项）。右键(MouseRightButton/ContextMenu)与左键双击Open/左键拖拽是不同事件，不冲突。
+            panel.ContextMenu = BuildIconContextMenu(item.FilePath);
             panel.MouseLeftButtonDown += (_, e) =>
             {
                 // 双击 Open（保留 M1 行为）；单击 arm 拖拽候选。双击不 arm，避免双击后误触发拖拽。
@@ -228,5 +232,82 @@ public partial class IconLayerWindow : Window
     {
         try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
         catch { /* M1 真机验收记录失败 case */ }
+    }
+
+    // ---------- T5：散落图标右键菜单（打开 / 重命名 / 删除 / 打开文件位置） ----------
+
+    /// <summary>构造散落图标右键菜单。只作用于散落区（FenceControl 内容图标右键不在本任务）。</summary>
+    private ContextMenu BuildIconContextMenu(string path)
+    {
+        var menu = new ContextMenu();
+        var miOpen = new MenuItem { Header = "打开" };
+        miOpen.Click += (_, _) => Open(path);
+        var miRename = new MenuItem { Header = "重命名" };
+        miRename.Click += (_, _) => RenameIcon(path);
+        var miDelete = new MenuItem { Header = "删除" };
+        miDelete.Click += (_, _) => DeleteIcon(path);
+        var miLocate = new MenuItem { Header = "打开文件位置" };
+        miLocate.Click += (_, _) => OpenFileLocation(path);
+        menu.Items.Add(miOpen);
+        menu.Items.Add(miRename);
+        menu.Items.Add(miDelete);
+        menu.Items.Add(miLocate);
+        return menu;
+    }
+
+    /// <summary>重命名：自定义对话框（预填完整文件名）→ ResolveRenamePath 校验 → File.Move。
+    /// 成功后 DesktopSync 的 FSW 自动检测 Renamed → Changed → SetIcons 全量重渲，UI 自动同步（旧名消失、新名出现）。</summary>
+    private void RenameIcon(string oldPath)
+    {
+        try
+        {
+            var oldName = Path.GetFileName(oldPath);
+            var newName = RenameDialog.AskRename(this, "重命名", oldName);
+            if (newName is null) return; // 用户取消
+
+            var result = IconFileOps.ResolveRenamePath(oldPath, newName);
+            if (!result.Ok)
+            {
+                MessageBox.Show(this, result.Error, "重命名", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            File.Move(oldPath, result.NewPath!);
+            // 不手动刷新 IconLayer：DesktopSync.Changed 已在 App.xaml.cs 接到 SetIcons，FSW 会触发重渲。
+        }
+        catch (Exception ex)
+        {
+            // 错误兜底：文件占用 / 权限丢失等不致崩，给用户可见提示。
+            MessageBox.Show(this, $"重命名失败：{ex.Message}", "重命名", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>删除：MessageBox 确认 → 走回收站（不永久删，Controller 决议）。
+    /// Microsoft.VisualBasic.FileIO 在 net10.0-windows 框架内可用。成功后 DesktopSync 自动检测 Deleted → 重渲。</summary>
+    private void DeleteIcon(string path)
+    {
+        try
+        {
+            var name = Path.GetFileName(path);
+            var r = MessageBox.Show(this, $"确定把 \"{name}\" 移到回收站？", "删除确认",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            if (r != MessageBoxResult.OK) return;
+
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            // 不手动刷新：DesktopSync.Changed → SetIcons 自动移除该图标。
+        }
+        catch (Exception ex)
+        {
+            // 兜底：回收站不可用 / 文件占用（VisualBasic UIOption.OnlyErrorDialogs 已自带系统级错误框，这里是托管层兜底）。
+            MessageBox.Show(this, $"删除失败：{ex.Message}", "删除", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>打开文件位置：资源管理器打开并选中该文件（explorer.exe /select）。</summary>
+    private static void OpenFileLocation(string path)
+    {
+        try { Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true }); }
+        catch { /* 资源管理器启动失败，静默兜底（与 Open 一致） */ }
     }
 }
