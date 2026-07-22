@@ -18,6 +18,9 @@ public partial class IconLayerWindow : Window
         InitializeComponent();
         SourceInitialized += (_, _) =>
         {
+            // 铺主屏工作区（不含任务栏），避免遮挡任务栏。M3 多屏改按显示器工作区定位。
+            var work = SystemParameters.WorkArea;
+            Left = work.Left; Top = work.Top; Width = work.Width; Height = work.Height;
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             WindowInterop.MakeNonInteractiveTopmost(hwnd); // 不点击穿透，可点图标
         };
@@ -36,7 +39,16 @@ public partial class IconLayerWindow : Window
                 Source = _icons.GetIcon(item.FilePath),
                 Stretch = Stretch.Uniform
             };
-            var label = new TextBlock { Text = item.DisplayName, MaxWidth = 80, TextWrapping = TextWrapping.Wrap };
+            var label = new TextBlock
+            {
+                Text = item.DisplayName,
+                MaxWidth = 80,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
+                Padding = new Thickness(2, 0, 2, 0)
+            };
             var panel = new StackPanel { Width = 80 };
             panel.Children.Add(img);
             panel.Children.Add(label);
