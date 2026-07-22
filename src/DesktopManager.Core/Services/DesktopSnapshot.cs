@@ -8,7 +8,7 @@ public sealed class DesktopSnapshot : IDesktopSnapshot
 {
     private readonly string[] _folders;
 
-    public DesktopSnapshot(params string[] folders) => _folders = folders;
+    public DesktopSnapshot(params string[] folders) => _folders = folders ?? throw new ArgumentNullException(nameof(folders));
 
     /// <summary>默认：用户桌面 + 公共桌面。</summary>
     public static DesktopSnapshot ForDefaultDesktops() => new(
@@ -24,7 +24,7 @@ public sealed class DesktopSnapshot : IDesktopSnapshot
             if (!Directory.Exists(folder)) continue;
             foreach (var path in Directory.EnumerateFiles(folder))
             {
-                if (!seen.Add(path)) continue; // 用户/公共桌面同名去重
+                if (!seen.Add(path)) continue; // 按完整 FilePath 去重（同一物理文件被多个文件夹路径枚举到时只留一份；用户/公共桌面下不同路径的同名文件各自保留）
                 items.Add(new IconItem(path, Path.GetFileName(path)));
             }
         }
