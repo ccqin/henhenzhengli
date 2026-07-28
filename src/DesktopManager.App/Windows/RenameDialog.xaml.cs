@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using DesktopManager.App.Services;
 
 namespace DesktopManager.App.Windows;
 
@@ -15,7 +16,9 @@ public partial class RenameDialog : Window
     }
 
     /// <summary>弹出重命名对话框。预填当前完整文件名（选中的是主名、不含扩展名，贴 Explorer 习惯）。
-    /// 返回用户输入的新文件名（已 Trim）；用户取消返回 null。由调用方做 ResolveRenamePath 校验。</summary>
+    /// 返回用户输入的新文件名（已 Trim）；用户取消返回 null。由调用方做 ResolveRenamePath 校验。
+    /// M2 真机修复 Bug 2：若 owner 是 IInteractiveHost（IconLayerWindow），ShowDialog 前临时激活 app
+    /// 让 Input TextBox 可输入；用 try/finally 确保 EndInput 在 OK/Cancel/关窗/Esc 任一返回路径都被调到。</summary>
     public static string? AskRename(Window owner, string prompt, string currentName)
     {
         var dlg = new RenameDialog
@@ -31,7 +34,18 @@ public partial class RenameDialog : Window
             dlg.Input.Select(0, dot > 0 ? dot : currentName.Length);
             dlg.Input.Focus();
         };
-        return dlg.ShowDialog() == true ? dlg.Input.Text.Trim() : null;
+        // M2 真机修复 Bug 2：owner 是 NOACTIVATE 窗口时，Input TextBox 无法获取键盘焦点 →
+        // 在 ShowDialog 前临时激活 app；try/finally 包 ShowDialog 保证任何返回路径都恢复 NOACTIVATE。
+        IInteractiveHost? host = owner as IInteractiveHost;
+        host?.BeginInput();
+        try
+        {
+            return dlg.ShowDialog() == true ? dlg.Input.Text.Trim() : null;
+        }
+        finally
+        {
+            host?.EndInput();
+        }
     }
 
     private void Ok_Click(object sender, RoutedEventArgs e)

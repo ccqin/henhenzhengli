@@ -13,9 +13,16 @@ using Serilog;
 
 namespace DesktopManager.App.Windows;
 
-public partial class IconLayerWindow : Window
+public partial class IconLayerWindow : Window, IInteractiveHost
 {
     private readonly IconExtractor _icons = new();
+
+    // ---------- M2 真机修复 Bug 2：NOACTIVATE 临时激活（IInteractiveHost） ----------
+    // SourceInitialized 时抓取 hwnd 并保留；BeginInput/EndInput 由 FenceControl/RenameDialog 在
+    // 文本输入前后调用，保证 app 进程在 NOACTIVATE 设计下仍可获取前台焦点输入。
+    private IntPtr _hwnd;
+    private long _noActivatePrevEx; // EnableActivation 返回值，EndInput 用其恢复
+    private bool _inputActive;      // 防 BeginInput 重入（如多次进入编辑未退出）导致 prevEx 被覆盖
 
     // ---------- T7：持久化 ----------
     // 配置存储（App.OnStartup 注入）。Save 在 ThreadPool 线程做文件 IO；BuildConfig 在 UI 线程收集。
@@ -54,8 +61,8 @@ public partial class IconLayerWindow : Window
             // 铺主屏工作区（不含任务栏），避免遮挡任务栏。M3 多屏改按显示器工作区定位。
             var work = SystemParameters.WorkArea;
             Left = work.Left; Top = work.Top; Width = work.Width; Height = work.Height;
-            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            WindowInterop.MakeNonInteractiveTopmost(hwnd); // 不点击穿透，可点图标
+            _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
         };
 
         // T7：启动防抖定时器（ThreadPool，一次性 due time）。
@@ -394,6 +401,31 @@ public partial class IconLayerWindow : Window
     {
         public AppConfig Load() => new AppConfig();
         public void Save(AppConfig config) { /* no-op */ }
+    }
+
+    // ---------- M2 真机修复 Bug 2：IInteractiveHost 实现 ----------
+    // IconLayerWindow 全屏 NOACTIVATE：不抢 explorer 焦点（M1 设计）。但导致 app 内 TextBox 都打不出字。
+    // BeginInput 临时去 NOACTIVATE + 前台化；EndInput 恢复 NOACTIVATE + SendToBottom 回桌面层。
+    // 严格成对：FenceControl.BeginTitleEdit/EndTitleEdit、RenameDialog.AskRename 的 try/finally 保证。
+
+    /// <summary>临时去 WS_EX_NOACTIVATE 并前台化，让 app 内 TextBox 可接收键盘输入。</summary>
+    public void BeginInput()
+    {
+        if (_inputActive) return; // 防重入：已在输入态时不再覆盖 _noActivatePrevEx（避免丢失原快照）
+        if (_hwnd == IntPtr.Zero) return; // SourceInitialized 未跑（极端早调用）：静默放弃，TextBox 仍可能可输入
+        _noActivatePrevEx = WindowInterop.EnableActivation(_hwnd);
+        _inputActive = true;
+    }
+
+    /// <summary>恢复 WS_EX_NOACTIVATE 并 SendToBottom 回桌面层 Z-order。</summary>
+    public void EndInput()
+    {
+        if (!_inputActive) return; // 与 BeginInput 未配对（如 BeginInput 早返回）：no-op 防误恢复
+        if (_hwnd != IntPtr.Zero)
+        {
+            WindowInterop.RestoreNonInteractive(_hwnd, _noActivatePrevEx);
+        }
+        _inputActive = false;
     }
 
     // ---------- T3：画布空白 Drop（从 Fence 内容区拖出到空白） ----------

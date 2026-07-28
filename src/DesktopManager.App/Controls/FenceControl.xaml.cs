@@ -194,15 +194,18 @@ public partial class FenceControl : UserControl
         return img;
     }
 
-    // ---------- T3：拖入接收（ContentArea Drop） ----------
+    // ---------- T3：拖入接收（UserControl 根 Drop） ----------
+    // M2 真机修复 Bug 1：Drop 处理从 ContentArea 提升到 UserControl 根（Fence_DragOver/Fence_Drop）。
+    // 原先仅 ContentArea（WrapPanel）接收：空盒 MinHeight=20 + 折叠态 Collapsed，命中 Border/HeaderBar 时
+    // 事件冒泡到 IconCanvas_Drop（无 owner → no-op）。根级 Drop 覆盖整个盒子可视区域，标题栏/边框/空白均可接收。
 
-    private void ContentArea_DragOver(object sender, DragEventArgs e)
+    private void Fence_DragOver(object sender, DragEventArgs e)
     {
         e.Effects = e.Data.GetDataPresent(DataFormats.Text) ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
     }
 
-    private void ContentArea_Drop(object sender, DragEventArgs e)
+    private void Fence_Drop(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.Text)) { e.Handled = true; return; }
         var path = (string)e.Data.GetData(DataFormats.Text);
@@ -281,7 +284,11 @@ public partial class FenceControl : UserControl
 
     private void BeginTitleEdit()
     {
+        if (_isEditing) return; // 守卫：右键「重命名」/双击标题双重触发不重复进入（避免 BeginInput 重入）
         _isEditing = true;
+        // M2 真机修复 Bug 2：宿主窗口 NOACTIVATE 时 TextBox 无法接收键盘输入，编辑前临时前台化。
+        // 必须在 TitleEdit.Focus() 前调，让 app 先获得前台焦点，TextBox 才能拿到键盘焦点。
+        if (Window.GetWindow(this) is IInteractiveHost host) host.BeginInput();
         TitleEdit.Text = _title;
         TitleText.Visibility = Visibility.Collapsed;
         TitleEdit.Visibility = Visibility.Visible;
@@ -335,5 +342,8 @@ public partial class FenceControl : UserControl
         _isEditing = false;
         TitleEdit.Visibility = Visibility.Collapsed;
         TitleText.Visibility = Visibility.Visible;
+        // M2 真机修复 Bug 2：编辑结束恢复 NOACTIVATE + 回桌面层 Z-order（与 BeginInput 严格配对）。
+        // Commit/Cancel/LostFocus 三条出口都经 EndTitleEdit，确保 EndInput 必触发。
+        if (Window.GetWindow(this) is IInteractiveHost host) host.EndInput();
     }
 }
