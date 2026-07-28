@@ -1,6 +1,7 @@
 <UserControl x:Class="DesktopManager.App.Controls.FenceControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:primitives="clr-namespace:System.Windows.Controls.Primitives;assembly=PresentationFramework"
              AllowDrop="True"
              DragOver="Fence_DragOver"
              Drop="Fence_Drop">
@@ -14,48 +15,67 @@
             BorderThickness="1"
             Padding="6"
             MinWidth="120">
-        <StackPanel>
-            <!-- 顶栏=标题栏，整体可拖动；双击进入标题编辑（见 code-behind） -->
-            <Grid x:Name="HeaderBar"
-                  Background="Transparent"
-                  MouseLeftButtonDown="HeaderBar_MouseLeftButtonDown"
-                  MouseMove="HeaderBar_MouseMove"
-                  MouseLeftButtonUp="HeaderBar_MouseLeftButtonUp">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock x:Name="TitleText"
-                           Grid.Column="0"
-                           Text="Fence"
-                           Foreground="White"
-                           FontWeight="Bold"
-                           VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis" />
-                <TextBox x:Name="TitleEdit"
-                         Grid.Column="0"
-                         Visibility="Collapsed"
-                         Background="#80000000"
-                         Foreground="White"
-                         BorderBrush="#40FFFFFF"
-                         CaretBrush="White"
-                         KeyDown="TitleEdit_KeyDown"
-                         LostFocus="TitleEdit_LostFocus" />
-                <Button x:Name="FoldButton"
-                        Grid.Column="1"
-                        Content="▾"
-                        Width="22"
-                        Height="22"
-                        Background="Transparent"
-                        Foreground="White"
-                        BorderThickness="0"
-                        Click="FoldButton_Click" />
-            </Grid>
-            <!-- 内容区：承载归属图标（T3 填充）；折叠时 Visibility=Collapsed。
-                 Drop 接收已提升到 UserControl 根（Fence_Drop），本元素不再单独需要 AllowDrop。 -->
-            <WrapPanel x:Name="ContentArea"
-                       Margin="0,4,0,0"
-                       MinHeight="20" />
-        </StackPanel>
+        <!-- Grid 同级容纳主 StackPanel + 右下角 resize Thumb（Thumb 钉右下角，自带 CaptureMouse，
+             不与 HeaderBar 拖动冲突）。 -->
+        <Grid>
+            <StackPanel>
+                <!-- 顶栏=标题栏，整体可拖动；双击进入标题编辑（见 code-behind） -->
+                <Grid x:Name="HeaderBar"
+                      Background="Transparent"
+                      MouseLeftButtonDown="HeaderBar_MouseLeftButtonDown"
+                      MouseMove="HeaderBar_MouseMove"
+                      MouseLeftButtonUp="HeaderBar_MouseLeftButtonUp">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="TitleText"
+                               Grid.Column="0"
+                               Text="Fence"
+                               Foreground="White"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBox x:Name="TitleEdit"
+                             Grid.Column="0"
+                             Visibility="Collapsed"
+                             Background="#80000000"
+                             Foreground="White"
+                             BorderBrush="#40FFFFFF"
+                             CaretBrush="White"
+                             KeyDown="TitleEdit_KeyDown"
+                             LostFocus="TitleEdit_LostFocus" />
+                    <Button x:Name="FoldButton"
+                            Grid.Column="1"
+                            Content="▾"
+                            Width="22"
+                            Height="22"
+                            Background="Transparent"
+                            Foreground="White"
+                            BorderThickness="0"
+                            Click="FoldButton_Click" />
+                </Grid>
+                <!-- 内容区：承载归属图标（T3 填充）；折叠时 Visibility=Collapsed。
+                     Drop 接收已提升到 UserControl 根（Fence_Drop），本元素不再单独需要 AllowDrop。 -->
+                <WrapPanel x:Name="ContentArea"
+                           Margin="0,4,0,0"
+                           MinHeight="20" />
+            </StackPanel>
+            <!-- M2 完善：右下角 resize Thumb，14x14 半透明方块，Cursor=SizeNWSE（↘）。
+                 DragDelta 改 Width/Height（最小值兜底 120x80）；DragCompleted 触发 ConfigChanged 持久化。
+                 Margin=2 让方块稍微内缩可见（不被 Border 描边压住）。 -->
+            <Thumb x:Name="ResizeThumb"
+                   Width="14"
+                   Height="14"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Bottom"
+                   Margin="0,0,2,2"
+                   Cursor="SizeNWSE"
+                   Background="#60000000"
+                   BorderBrush="#60FFFFFF"
+                   BorderThickness="1"
+                   DragDelta="ResizeThumb_DragDelta"
+                   DragCompleted="ResizeThumb_DragCompleted" />
+        </Grid>
     </Border>
 </UserControl>

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using DesktopManager.App.Services;
@@ -152,27 +153,53 @@ public partial class FenceControl : UserControl
     public bool ContainsIcon(string filePath)
         => _contentIcons.ContainsKey(filePath);
 
-    /// <summary>构造内容区小图标项：28x28 Image + 文件名 ToolTip，支持左键拖出（移动阈值 → DoDragDrop）。</summary>
+    /// <summary>构造内容区小图标项：StackPanel(28x28 Image + 文件名 TextBlock)，支持左键拖出（移动阈值 → DoDragDrop）。
+    /// M2 完善：原先仅 Image（文件名只能 hover 看），现加 TextBlock 显示名字，参考散落图标样式但更紧凑。
+    /// 拖出逻辑挂在 StackPanel 上（与散落图标 panel 对称），保证拖出仍工作。</summary>
     private FrameworkElement BuildContentIcon(string filePath)
     {
+        var name = Path.GetFileName(filePath);
         var img = new Image
         {
             Width = 28,
             Height = 28,
             Source = _icons.GetIcon(filePath),
             Stretch = Stretch.Uniform,
-            ToolTip = Path.GetFileName(filePath),
-            VerticalAlignment = VerticalAlignment.Top
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Center
         };
-        // 左键按下 arm 拖拽候选；MouseMove 超阈值 → DoDragDrop（data=FilePath，与散落区一致）。
-        img.MouseLeftButtonDown += (_, e) =>
+        // TextBlock：白字小字 + 半透明黑底，参考散落图标 Color.FromArgb(140,0,0,0) + Padding(2,0,2,0)。
+        // 紧凑布局：MaxWidth=60 单行截断（CharacterEllipsis），完整名走 ToolTip 兜底。
+        var label = new TextBlock
+        {
+            Text = name,
+            FontSize = 10,
+            MaxWidth = 60,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
+            Padding = new Thickness(2, 0, 2, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+        var panel = new StackPanel
+        {
+            Width = 64,
+            Margin = new Thickness(2),
+            ToolTip = name
+        };
+        panel.Children.Add(img);
+        panel.Children.Add(label);
+        // 拖出逻辑：挂 panel（与散落图标对称），左键按下 arm；MouseMove 超阈值 → DoDragDrop（data=FilePath）。
+        panel.MouseLeftButtonDown += (_, e) =>
         {
             _contentDragArmed = true;
             _contentDragPath = filePath;
             _contentDragOrigin = e.GetPosition(this);
             e.Handled = true;
         };
-        img.MouseMove += (_, e) =>
+        panel.MouseMove += (_, e) =>
         {
             if (!_contentDragArmed || _contentDragPath is null) return;
             if (e.LeftButton != MouseButtonState.Pressed) return;
@@ -183,15 +210,15 @@ public partial class FenceControl : UserControl
                 var path = _contentDragPath;
                 _contentDragArmed = false;
                 _contentDragPath = null;
-                DragDrop.DoDragDrop(img, path, DragDropEffects.Move);
+                DragDrop.DoDragDrop(panel, path, DragDropEffects.Move);
             }
         };
-        img.MouseLeftButtonUp += (_, _) =>
+        panel.MouseLeftButtonUp += (_, _) =>
         {
             _contentDragArmed = false;
             _contentDragPath = null;
         };
-        return img;
+        return panel;
     }
 
     // ---------- T3：拖入接收（UserControl 根 Drop） ----------
@@ -345,5 +372,27 @@ public partial class FenceControl : UserControl
         // M2 真机修复 Bug 2：编辑结束恢复 NOACTIVATE + 回桌面层 Z-order（与 BeginInput 严格配对）。
         // Commit/Cancel/LostFocus 三条出口都经 EndTitleEdit，确保 EndInput 必触发。
         if (Window.GetWindow(this) is IInteractiveHost host) host.EndInput();
+    }
+
+    // ---------- M2 完善：resize（右下角 Thumb 拖改 W/H，DragCompleted 触发持久化） ----------
+    // 持久化闭环：resize → Width/Height 改 → ActualWidth/Height 跟着变 → DragCompleted 触发 ConfigChanged
+    // → 宿主 SaveFencesDebounced → BuildConfig 读 ActualWidth/Height 写回 W/H（已在 :88-89 就绪）。
+    // 不干扰 HeaderBar 拖动：Thumb 在 Border 内 Grid 同级，自带 CaptureMouse，事件不路由到 HeaderBar。
+
+    private const double ResizeMinWidth = 120;
+    private const double ResizeMinHeight = 80;
+
+    private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        // DragDelta 频繁触发，只改尺寸不发 ConfigChanged（防抖兜底，但 DragCompleted 干净一次更好）。
+        // 最小值兜底 Math.Max(120, 80)，避免缩到看不见或破坏布局。
+        Width = Math.Max(ResizeMinWidth, Width + e.HorizontalChange);
+        Height = Math.Max(ResizeMinHeight, Height + e.VerticalChange);
+    }
+
+    private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        // 拖完一次触发持久化（vs DragDelta 每次触发 → 频繁 SaveFencesDebounced，虽防抖 500ms 兜底但更脏）。
+        ConfigChanged?.Invoke();
     }
 }
