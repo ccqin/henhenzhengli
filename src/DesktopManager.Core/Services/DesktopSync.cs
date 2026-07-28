@@ -1,5 +1,6 @@
 using System.IO;
 using DesktopManager.Core.Models;
+using Serilog;
 namespace DesktopManager.Core.Services;
 
 /// <summary>监听桌面文件变化：FileSystemWatcher 事件 + 定时全量对账双保险（FSW 漏事件时对账兜底）。</summary>
@@ -48,7 +49,8 @@ public sealed class DesktopSync : IDisposable
         }
         catch (System.Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"DesktopSync.Reconcile 失败：{ex}");
+            // 可恢复降级：单次对账失败不致 sync 失活（watcher/Timer 继续），但需记录便于诊断 IO 瞬时问题。
+            Log.Warning(ex, "DesktopSync.Reconcile 失败");
         }
     }
 

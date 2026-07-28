@@ -9,6 +9,7 @@ using DesktopManager.App.Services;
 using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
 using DesktopManager.Native;
+using Serilog;
 
 namespace DesktopManager.App.Windows;
 
@@ -77,7 +78,7 @@ public partial class IconLayerWindow : Window
         catch (Exception ex)
         {
             // ConfigStore.Load 内部已兜底返回默认；这里再兜一层防 IConfigStore 实现抛异常 → 不阻塞启动。
-            System.Diagnostics.Debug.WriteLine($"LoadFencesFromConfig: Load 失败，空配置启动：{ex}");
+            Log.Warning(ex, "LoadFencesFromConfig: Load 失败，空配置启动");
             config = new AppConfig();
         }
 
@@ -95,7 +96,8 @@ public partial class IconLayerWindow : Window
             }
             catch (System.Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"LoadFencesFromConfig：Fence {fc?.Id} 加载失败，跳过该 Fence（其余继续）：{ex}");
+                // 单个 Fence 加载失败属可恢复降级（其余 Fence 仍可加载），用 Warning 而非 Error。
+                Log.Warning(ex, "LoadFencesFromConfig：Fence {FenceId} 加载失败，跳过该 Fence（其余继续）", fc?.Id);
                 continue;
             }
         }
@@ -351,7 +353,7 @@ public partial class IconLayerWindow : Window
         catch (Exception ex)
         {
             // 持久化失败不应崩 UI（同 ConfigStore 异常兜底理念）。下次变更会再触发重试。
-            System.Diagnostics.Debug.WriteLine($"防抖保存失败：{ex}");
+            Log.Warning(ex, "防抖保存失败");
         }
     }
 
@@ -383,7 +385,7 @@ public partial class IconLayerWindow : Window
         catch (Exception ex)
         {
             // 退出保存失败不阻塞 RestoreExplorer/ClearSelfCleanup（OnExit 兜底）。
-            System.Diagnostics.Debug.WriteLine($"退出保存失败：{ex}");
+            Log.Error(ex, "退出保存失败");
         }
     }
 

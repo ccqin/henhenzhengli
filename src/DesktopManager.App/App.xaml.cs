@@ -1,8 +1,10 @@
 using System.IO;
 using System.Windows;
-using DesktopManager.Core.Services;
+using DesktopManager.App.Logging;
 using DesktopManager.App.Windows;
+using DesktopManager.Core.Services;
 using H.NotifyIcon;
+using Serilog;
 
 namespace DesktopManager.App;
 
@@ -23,23 +25,28 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // P1：日志必须最先初始化——后续所有诊断（含 --restore-icons 分支）都依赖 Log.Logger。
+        LogConfig.Init();
+
         // C1（I-3 致命项）：--restore-icons 模式。RunOnce 触发的崩溃恢复路径。
         // 最早期检测（在 tray/window 创建之前）：调 RestoreExplorer（= ShowDesktopIcons，含 WM_SETTINGCHANGE 广播）
         // → HideIcons=0 且广播刷新 explorer → 桌面图标恢复 → Shutdown 退出。
         // 广播消除 RunOnce/explorer 时序依赖（无论 explorer 是否已读 HideIcons=1 都会刷新）。
         // **此模式绝不接管、不建窗口、不跑 sync**——只恢复后退出。
-        if (e.Args.Length > 0 && Array.IndexOf(e.Args, "--restore-icons") >= 0)
+        bool isRestoreMode = e.Args.Length > 0 && Array.IndexOf(e.Args, "--restore-icons") >= 0;
+        Log.Information("DesktopManager 启动，模式={Mode}", isRestoreMode ? "restore-icons" : "normal");
+        if (isRestoreMode)
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine("--restore-icons 模式：恢复桌面图标（含 WM_SETTINGCHANGE 广播）后退出。");
+                Log.Information("--restore-icons 模式：恢复桌面图标（含 WM_SETTINGCHANGE 广播）后退出。");
                 var restoreGuard = new RecoveryGuard();
                 restoreGuard.RestoreExplorer();
             }
             catch (System.Exception ex)
             {
                 // 恢复失败也退出（不接管）；最坏情况下次正常启动会再 DetectState/Restore。
-                System.Diagnostics.Debug.WriteLine($"--restore-icons 恢复失败：{ex}");
+                Log.Error(ex, "--restore-icons 恢复失败");
             }
             // ShutdownMode=OnExplicitShutdown（App.xaml）：显式 Shutdown 才退出。
             // 此分支未创建任何 window/tray，OnExit 里 _iconLayer/_sync/_tray/_recoveryGuard 字段全 null，全 ?. no-op，安全。
@@ -56,7 +63,7 @@ public partial class App : Application
         var state = _recoveryGuard.DetectState();
         if (state == RecoveryState.PreviouslyTakenOver)
         {
-            System.Diagnostics.Debug.WriteLine("上次异常退出，接管状态恢复中");
+            Log.Information("上次异常退出，接管状态恢复中");
         }
         // I1：TakeOver + SetSelfCleanupOnExit 包 try/catch。
         // - TakeOver 部分成功（HideIcons 已设 1）后抛 → catch 回滚 RestoreExplorer（HideIcons 恢复 0，含广播）→ rethrow 走 WPF 未处理流程，
@@ -107,7 +114,7 @@ public partial class App : Application
                 try { _recoveryGuard.TakeOver(); _recoveryGuard.SetSelfCleanupOnExit(); /* 重新接管后重写 RunOnce（场景4） */ }
                 catch (System.Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"ExplorerRestarted TakeOver 失败：{ex}");
+                    Log.Error(ex, "ExplorerRestarted TakeOver 失败");
                     try { _recoveryGuard.RestoreExplorer(); } catch { /* RestoreExplorer 也失败则不再升级 */ }
                 }
             }));
@@ -133,7 +140,7 @@ public partial class App : Application
         // 放 _sync.Dispose / RestoreExplorer 之前：保存是 app 职责的核心数据，优先级最高。
         // 保存失败不阻塞后续恢复流程（SaveFencesNow 内部 try/catch）。
         try { _iconLayer?.SaveFencesNow(); }
-        catch (System.Exception ex) { System.Diagnostics.Debug.WriteLine($"OnExit SaveFencesNow 失败：{ex}"); }
+        catch (System.Exception ex) { Log.Error(ex, "OnExit SaveFencesNow 失败"); }
 
         _sync?.Dispose();
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
@@ -145,9 +152,11 @@ public partial class App : Application
         }
         catch (System.Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"OnExit RestoreExplorer/ClearSelfCleanup 失败，保留 RunOnce 兜底：{ex}");
+            // 可恢复的降级路径：桌面图标恢复失败时保留 RunOnce 兜底（下次登录自动修复）→ Warning。
+            Log.Warning(ex, "OnExit RestoreExplorer/ClearSelfCleanup 失败，保留 RunOnce 兜底");
         }
         _tray?.Dispose();
+        LogConfig.Shutdown(); // P1：base.OnExit 之前 flush 日志
         base.OnExit(e);
     }
 }

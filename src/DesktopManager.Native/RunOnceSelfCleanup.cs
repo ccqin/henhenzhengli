@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using DesktopManager.Core.Services;
 using Microsoft.Win32;
+using Serilog;
 
 namespace DesktopManager.Native;
 
@@ -27,7 +27,7 @@ public static class RunOnceSelfCleanup
             if (string.IsNullOrEmpty(appPath))
             {
                 // 理论兜底：ProcessPath 在某些托管启动场景可能为 null。无路径无法构造 --restore-icons 命令 → 跳过。
-                Debug.WriteLine("SetSelfCleanupOnExit：Environment.ProcessPath 为空，无法构造 --restore-icons 命令，跳过 RunOnce 写入（I-3 兜底未生效）。");
+                Log.Warning("SetSelfCleanupOnExit：Environment.ProcessPath 为空，无法构造 --restore-icons 命令，跳过 RunOnce 写入（I-3 兜底未生效）。");
                 return;
             }
             using var key = Registry.CurrentUser.CreateSubKey(RunOnceSelfCleanupSpec.RunOnceKeyPath, writable: true);
@@ -39,7 +39,7 @@ public static class RunOnceSelfCleanup
         {
             // 权限丢失/键损坏：不崩 app（内部兜底不阻断启动）。但 I-3 兜底未生效 = 若此时 app 崩溃 →
             // 下次登录桌面图标可能仍空（无 RunOnce 触发 --restore-icons）。真机验收用 reg query 确认 RunOnce 真写入。
-            Debug.WriteLine($"SetSelfCleanupOnExit 失败（I-3 兜底未生效，若崩溃下次登录桌面可能空）：{ex}");
+            Log.Error(ex, "SetSelfCleanupOnExit 失败（I-3 兜底未生效，若崩溃下次登录桌面可能空）");
         }
     }
 
@@ -54,7 +54,7 @@ public static class RunOnceSelfCleanup
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"ClearSelfCleanup 失败：{ex}");
+            Log.Warning(ex, "ClearSelfCleanup 失败");
         }
     }
 }

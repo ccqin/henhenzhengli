@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using DesktopManager.Core.Models;
+using Serilog;
 namespace DesktopManager.Core.Services;
 
 public sealed class ConfigStore : IConfigStore
@@ -30,7 +31,8 @@ public sealed class ConfigStore : IConfigStore
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {
-            // TODO M1: 接入日志框架记录 ex
+            // P1（原 TODO M1）：配置文件损坏/读取失败已兜底返回默认配置，但需记录以便诊断反复损坏的根因。
+            Log.Warning(ex, "ConfigStore.Load 失败，返回空配置（路径={Path})", _path);
             return new AppConfig();
         }
     }
