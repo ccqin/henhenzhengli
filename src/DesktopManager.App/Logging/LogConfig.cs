@@ -24,7 +24,6 @@ public static class LogConfig
 
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()              // 开发期 Debug；线上若嫌噪可改 Information 或加配置开关
-            .Enrich.FromLogContext()
             .WriteTo.File(
                 path: Path.Combine(logDir, "log-.log"),
                 outputTemplate: template,
