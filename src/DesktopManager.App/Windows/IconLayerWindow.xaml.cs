@@ -222,8 +222,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             if (_fences.Any(f => f.ContainsIcon(path))) continue; // 其他 Fence 仍持有，保留归属
             _fencedPaths.Remove(path);
             var it = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
-            if (it is null) it = new IconItem(path, Path.GetFileName(path));
-            if (!_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 网格排位，否则保留原位置；防重复
+            // I-1 幽灵图标：fallback 前 File.Exists 守卫——fenced 文件被外部删除后 ApplyDiff 已移除该 path，
+            // 此时拖出/删 Fence 触发回填，若不守卫会把磁盘上已不存在的文件加回散落区 → 幽灵图标（sync 不自清）。
+            // 文件不存在则 it 保持 null，下方 Add 跳过（不加幽灵、不 NRE）。
+            if (it is null && File.Exists(path)) it = new IconItem(path, Path.GetFileName(path));
+            if (it is not null && !_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 网格排位，否则保留原位置；防重复
         }
         SaveFencesDebounced(); // T7
     }
@@ -314,9 +317,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // T6：单条回填（替代 ApplySnapshot 全量兜底）。从 _allItems 找回 IconItem（T3 单实例 → 保留拖入前的原 X/Y 位置）；
         // 找不到（罕见：新文件被直接 fenced 且从未进散落区）则构造新项，AddLooseIcon 统一网格排位。
         var it = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
-        if (it is null) it = new IconItem(filePath, Path.GetFileName(filePath));
+        // I-1 幽灵图标：fallback 前 File.Exists 守卫——fenced 文件被外部删除后 ApplyDiff 已移除该 path，
+        // 此时拖出/删 Fence 触发回填，若不守卫会把磁盘上已不存在的文件加回散落区 → 幽灵图标（sync 不自清）。
+        // 文件不存在则 it 保持 null，下方 Add 跳过（不加幽灵、不 NRE）。
+        if (it is null && File.Exists(filePath)) it = new IconItem(filePath, Path.GetFileName(filePath));
         // 防重复事件：it 已在散落区则不重复 Add（Contains 走引用相等，T3 单实例下可靠）。
-        if (!_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 时网格排位，否则保留原位置
+        if (it is not null && !_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 时网格排位，否则保留原位置
         SaveFencesDebounced(); // T7
     }
 
