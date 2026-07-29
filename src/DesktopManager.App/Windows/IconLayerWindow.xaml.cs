@@ -38,15 +38,15 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     // ---------- T3：归属划分 + 最小接线 ----------
     // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
-    // P0-T2：FenceControl 是 IconCanvas 的持久子元素（CreateFence 一次 Add），SetIcons 不再 Clear Children、不再重 Add Fence。
+    // P0-T2：FenceControl 是 IconCanvas 的持久子元素（CreateFence 一次 Add），ApplySnapshot/ApplyDiff 不 Clear Children、不重 Add Fence。
     private readonly List<FenceControl> _fences = new();
-    // 当前已归属任一 Fence 的 FilePath 集合，SetIcons 据此过滤散落区（避免归属图标重复显示）。
+    // 当前已归属任一 Fence 的 FilePath 集合，ApplySnapshot/ApplyDiff 据此过滤散落区（避免归属图标重复显示）。
     private readonly HashSet<string> _fencedPaths = new(StringComparer.OrdinalIgnoreCase);
-    // 最近一次 SetIcons 的输入快照；归属变化后用它重渲散落区（保证过滤生效）。
+    // 当前散落区全集快照（ApplySnapshot 设 / ApplyDiff 增量维护）；归属变化后用它重渲散落区（保证过滤生效）。
     private IReadOnlyList<IconItem> _allItems = Array.Empty<IconItem>();
 
     // ---------- P0-T2：散落图标数据驱动渲染 ----------
-    // 散落图标集合（增量驱动 ItemsControl）。SetIcons 过渡为 reconcile：Clear + 按 _fencedPaths 过滤 Add。
+    // 散落图标集合（增量驱动 ItemsControl）。P0-T3：ApplySnapshot/ApplyDiff 经 IconSetReconciler 算 toAdd/toRemove 后 mutate。
     // WPF ItemContainerGenerator 在 Add/Remove 时只创建/销毁差异容器 = 免费增量 diff（替代 M2 Children.Clear+重建）。
     private readonly ObservableCollection<IconItem> _looseIcons = new();
 
@@ -212,37 +212,67 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         fence.IconAdded -= OnFenceIconAdded;
         fence.IconRemoved -= OnFenceIconRemoved;
         fence.ConfigChanged -= OnFenceConfigChanged; // T7
-        // 释放归属：该 Fence 的图标若无其他 Fence 仍持有，从 _fencedPaths 移除 → SetIcons 后回散落区。
+        // 释放归属：该 Fence 的图标若无其他 Fence 仍持有，从 _fencedPaths 移除 → ApplySnapshot 后回散落区。
         foreach (var path in paths)
         {
             if (!_fences.Any(f => f.ContainsIcon(path)))
                 _fencedPaths.Remove(path);
         }
-        SetIcons(_allItems); // 重渲散落区，被释放的图标回来
+        ApplySnapshot(_allItems); // 重渲散落区（增量），被释放的图标回来
         SaveFencesDebounced(); // T7
     }
 
-    /// <summary>渲染散落图标列表（P0-T2：ObservableCollection 驱动 ItemsControl，替代 M2 全量 Clear+重建）。
-    /// 过渡实现：Clear + 按 <c>_fencedPaths</c> 过滤后逐个 Add（ItemContainerGenerator 只为新增项创建容器 = 增量）。
-    /// 无 <c>IconCanvas.Children.Clear</c>：LooseItemsControl 是 IconCanvas 持久子元素（XAML 声明），FenceControl 由 CreateFence 一次 Add。
-    /// T3 将把本方法进一步拆为 ApplySnapshot/ApplyDiff（真正单条增量）；此处仍是全量 reconcile 但不再闪屏/不再打断拖拽（R2 数据引用保护）。
-    /// X/Y 来自 IconItem（INPC）；快照无位置（<=0）则自动网格排（M1 行为保留），赋值触发 ItemContainerStyle 的 Canvas.Left/Top 绑定更新。</summary>
-    public void SetIcons(IReadOnlyList<IconItem> items)
+    /// <summary>P0-T3：全量对账渲染（启动/explorer 重启/归属变化兜底用）。
+    /// 增量 reconcile：用 <see cref="IconSetReconciler.PlanSnapshot"/> 算 toAdd/toRemove，仅对差异项 mutate <c>_looseIcons</c>
+    /// （WPF ItemContainerGenerator 只创建/销毁差异容器 = 无闪屏）。无 <c>IconCanvas.Children.Clear</c>，Fence 不重 Add。
+    /// X/Y 来自 IconItem（INPC）；快照无位置（&lt;=0）则按 count 网格排，赋值触发 ItemContainerStyle 的 Canvas.Left/Top 绑定刷新。</summary>
+    public void ApplySnapshot(IReadOnlyList<IconItem> all)
     {
-        _allItems = items;
-        _looseIcons.Clear();
-        int col = 0, row = 0;
-        foreach (var item in items)
+        _allItems = all;
+        var (toAdd, toRemove) = IconSetReconciler.PlanSnapshot(all, _fencedPaths, _looseIcons);
+
+        // 先 Remove 再 Add：count（网格排位依据）反映删除后的剩余项数，新项顺势补位。
+        // toRemove 是 currentLoose（=_looseIcons）原实例引用，Remove 走引用相等命中。
+        foreach (var rem in toRemove) _looseIcons.Remove(rem);
+        foreach (var add in toAdd) AddLooseIcon(add);
+    }
+
+    /// <summary>P0-T3：增量对账渲染（sync.Changed 用）。真正单条增量：Added→Add，Removed→Remove。
+    /// <para>_allItems 同步更新（移除 Removed / 追加 Added），保证后续 ApplySnapshot 兜底看到最新全集。</para>
+    /// <para>新 IconItem 的 DisplayName=Path.GetFileName（与 <c>DesktopSnapshot</c> 一致）；X/Y=0 待网格排。</para>
+    /// <para>R9 rename：DesktopDiff 已拆 Removed(旧)+Added(新)，两端各自处理 → 旧名消失、新名出现。</para></summary>
+    public void ApplyDiff(DesktopDiff diff)
+    {
+        // 1. 更新 _allItems（全集）：移除 Removed 的 IconItem，追加 Added 的 IconItem。
+        var removedPaths = new HashSet<string>(diff.Removed.Select(r => r.FilePath), StringComparer.OrdinalIgnoreCase);
+        var rebuilt = new List<IconItem>(_allItems.Count + diff.Added.Count);
+        foreach (var existing in _allItems)
+            if (!removedPaths.Contains(existing.FilePath)) rebuilt.Add(existing);
+        foreach (var added in diff.Added) rebuilt.Add(added);
+        _allItems = rebuilt;
+
+        // 2. 增量 mutate _looseIcons（UI 线程，R7）。
+        var (toAdd, toRemove) = IconSetReconciler.PlanDiff(diff, _fencedPaths, _looseIcons);
+
+        // 倒序 RemoveAt：按 path 匹配删除，避免索引前移错位。
+        var removeSet = new HashSet<string>(toRemove, StringComparer.OrdinalIgnoreCase);
+        for (int i = _looseIcons.Count - 1; i >= 0; i--)
         {
-            if (_fencedPaths.Contains(item.FilePath)) continue; // 已归属，不显示在散落区
-
-            // 自动网格排（快照无位置时）。对 IconItem 赋值 → INPC → ItemContainerStyle 的 Canvas.Left/Top 绑定刷新。
-            if (item.X <= 0) item.X = 16 + col * 90;
-            if (item.Y <= 0) item.Y = 16 + row * 96;
-            _looseIcons.Add(item);
-
-            if (++col >= 10) { col = 0; row++; }
+            if (removeSet.Contains(_looseIcons[i].FilePath))
+                _looseIcons.RemoveAt(i);
         }
+        foreach (var add in toAdd) AddLooseIcon(add);
+    }
+
+    /// <summary>网格排位 + Add：count = Add 前 <c>_looseIcons</c>.Count；X/Y&lt;=0 才赋值（保留已定位项）。
+    /// 赋值触发 INPC → ItemContainerStyle 的 Canvas.Left/Top 绑定刷新（T1 INPC 收益）。
+    /// 策略：16+(count%10)*90, 16+(count/10)*96（M1 网格行为，10 列宽 90 / 行高 96）。</summary>
+    private void AddLooseIcon(IconItem item)
+    {
+        int count = _looseIcons.Count;
+        if (item.X <= 0) item.X = 16 + (count % 10) * 90;
+        if (item.Y <= 0) item.Y = 16 + (count / 10) * 96;
+        _looseIcons.Add(item);
     }
 
     // ---------- T3：Fence 归属事件回调 ----------
@@ -260,14 +290,16 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             other.RemoveIconSilent(filePath);
         }
         // 异步重渲散落区：不在 Drop 回调里同步改视觉树（避免事件源元素正被重渲的隐患，同 App.xaml.cs I-5 模式）。
-        Dispatcher.BeginInvoke(new Action(() => SetIcons(_allItems)));
+        // T3：ApplySnapshot 增量对账（仅移除新 fenced 项），T6 将改为单条 _looseIcons.Remove。
+        Dispatcher.BeginInvoke(new Action(() => ApplySnapshot(_allItems)));
         SaveFencesDebounced(); // T7：归属变化持久化
     }
 
     private void OnFenceIconRemoved(FenceControl fence, string filePath)
     {
         _fencedPaths.Remove(filePath);
-        Dispatcher.BeginInvoke(new Action(() => SetIcons(_allItems)));
+        // T3：ApplySnapshot 增量对账（新释放的 path 自动回填散落区），T6 将改为单条回填。
+        Dispatcher.BeginInvoke(new Action(() => ApplySnapshot(_allItems)));
         SaveFencesDebounced(); // T7
     }
 
@@ -517,7 +549,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     /// <summary>重命名：自定义对话框（预填完整文件名）→ ResolveRenamePath 校验 → File.Move。
-    /// 成功后 DesktopSync 的 FSW 自动检测 Renamed → Changed → SetIcons 全量重渲，UI 自动同步（旧名消失、新名出现）。</summary>
+    /// 成功后 DesktopSync 的 FSW 自动检测 Renamed → Changed → ApplyDiff 增量重渲，UI 自动同步（旧名消失、新名出现）。</summary>
     private void RenameIcon(string oldPath)
     {
         try
@@ -533,7 +565,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 return;
             }
             File.Move(oldPath, result.NewPath!);
-            // 不手动刷新 IconLayer：DesktopSync.Changed 已在 App.xaml.cs 接到 SetIcons，FSW 会触发重渲。
+            // 不手动刷新 IconLayer：DesktopSync.Changed 已在 App.xaml.cs 接到 ApplyDiff，FSW 会触发增量重渲。
         }
         catch (Exception ex)
         {
@@ -556,7 +588,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-            // 不手动刷新：DesktopSync.Changed → SetIcons 自动移除该图标。
+            // 不手动刷新：DesktopSync.Changed → ApplyDiff 自动移除该图标。
         }
         catch (Exception ex)
         {

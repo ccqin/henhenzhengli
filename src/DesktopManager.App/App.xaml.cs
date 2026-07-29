@@ -93,9 +93,9 @@ public partial class App : Application
             _iconLayer.Show();
             var iconHwnd = new System.Windows.Interop.WindowInteropHelper(_iconLayer).Handle;
 
-            // 3. 桌面同步：初始 SetIcons + Changed 事件 Dispatcher 回 SetIcons
+            // 3. 桌面同步：初始 ApplySnapshot（全量对账）+ Changed 事件 Dispatcher 回 ApplyDiff（增量对账，拿回 DesktopDiff = 免费增量）
             var snapshot = DesktopSnapshot.ForDefaultDesktops();
-            _iconLayer.SetIcons(snapshot.Capture());
+            _iconLayer.ApplySnapshot(snapshot.Capture());
             _sync = new DesktopSync(
                 snapshot,
                 new[] {
@@ -104,7 +104,8 @@ public partial class App : Application
                 },
                 TimeSpan.FromSeconds(3));
             // BeginInvoke 异步投递：防 UI 线程阻塞时与 OnExit 的 sync.Dispose() 理论死锁（I-5）。
-            _sync.Changed += (_, _) => Dispatcher.BeginInvoke(new Action(() => _iconLayer.SetIcons(_sync.Current)));
+            // R7：_looseIcons mutate 全在 UI 线程。Changed 第二参是 DesktopDiff（P0-T3 拿回，原 (_,_) 丢弃）。
+            _sync.Changed += (_, diff) => Dispatcher.BeginInvoke(new Action(() => _iconLayer.ApplyDiff(diff)));
 
             // 4. explorer 重启：TaskbarCreated → 重新接管（Attach 到 iconLayer hwnd）
             _shellWatcher = new ShellRestartWatcher();
