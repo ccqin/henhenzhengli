@@ -3,7 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" Background="Transparent">
-    <!-- 根画布：承载散落图标项 + FenceControl（T3 最小接线硬编码一个）。
+    <!-- 根画布（P0 R1 混合 Canvas）：子元素有序两类——
+         [0] LooseItemsControl（底层 Z-order；散落图标数据驱动渲染；Canvas.Left/Top=0 占满）
+         [1..] FenceControl...（上层 Z-order；CreateFence 一次 Add，持久驻留，不随 SetIcons 重 Add）。
          AllowDrop=true 接收从 Fence 内容区拖出到空白的图标（data=FilePath）。
          Background=Transparent：null 背景的 Canvas 不响应空白 hit-test，必须非 null 才能接收双击空白。 -->
     <Canvas x:Name="IconCanvas"
@@ -11,5 +13,55 @@
             AllowDrop="True"
             MouseLeftButtonDown="IconCanvas_MouseLeftButtonDown"
             DragOver="IconCanvas_DragOver"
-            Drop="IconCanvas_Drop"/>
+            Drop="IconCanvas_Drop">
+
+        <!-- 散落图标 ItemsControl（数据驱动渲染）。
+             R1 坐标对齐：Canvas.Left/Top=0 + Width/Height 绑 IconCanvas.ActualWidth/Height，
+             使内部 ItemsPanel Canvas 与 IconCanvas 坐标系 1:1（散落图标的 Canvas.Left/Top {Binding X/Y} 落在屏幕同一处）。
+             R1 空白穿透：ItemsPanel=<Canvas IsItemsHost Background={x:Null}>，null 背景不参与空白 hit-test，
+             空白点击/右键穿透回 IconCanvas（双击空白切可见性 + 画布右键菜单仍工作）。
+             R2/R3 拖拽三守卫挂在 Preview 事件（隧道，先于子元素），_draggedIcon 持数据引用。 -->
+        <ItemsControl x:Name="LooseItemsControl"
+                      Canvas.Left="0" Canvas.Top="0"
+                      Width="{Binding ActualWidth, ElementName=IconCanvas}"
+                      Height="{Binding ActualHeight, ElementName=IconCanvas}"
+                      PreviewMouseLeftButtonDown="Loose_PreviewMouseLeftButtonDown"
+                      PreviewMouseLeftButtonUp="Loose_PreviewMouseLeftButtonUp"
+                      PreviewMouseMove="Loose_PreviewMouseMove"
+                      PreviewMouseRightButtonDown="Loose_PreviewMouseRightButtonDown">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <Canvas IsItemsHost="True" Background="{x:Null}"/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+
+            <!-- ItemContainerStyle：ContentPresenter 在 ItemsPanel Canvas 上的位置 = IconItem.X/Y（INPC 绑定）。 -->
+            <ItemsControl.ItemContainerStyle>
+                <Style TargetType="ContentPresenter">
+                    <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                    <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                </Style>
+            </ItemsControl.ItemContainerStyle>
+
+            <!-- 散落图标 DataTemplate（替代 M2 命令式构建 StackPanel）。
+                 R4 可见性：根 StackPanel Visibility 绑窗口 IconVisibility DP（双击空白切它 → 全部散落图标显隐）。 -->
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Width="80"
+                                Background="Transparent"
+                                Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
+                        <Image Width="32" Height="32" Stretch="Uniform"
+                               Source="{Binding FilePath, Converter={StaticResource FilePathToIconConverter}}"/>
+                        <TextBlock Text="{Binding DisplayName}"
+                                   MaxWidth="80"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Foreground="White"
+                                   Background="#8C000000"
+                                   Padding="2,0,2,0"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </Canvas>
 </Window>

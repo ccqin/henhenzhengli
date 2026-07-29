@@ -1,9 +1,11 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using DesktopManager.App.Converters;
 using DesktopManager.App.Controls;
 using DesktopManager.App.Services;
 using DesktopManager.Core.Models;
@@ -36,24 +38,45 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     // ---------- T3：归属划分 + 最小接线 ----------
     // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
-    // SetIcons 全量重渲时会 Clear IconCanvas，Fence 必须在 Clear 后重 Add 才不丢（实例状态在内存）。
+    // P0-T2：FenceControl 是 IconCanvas 的持久子元素（CreateFence 一次 Add），SetIcons 不再 Clear Children、不再重 Add Fence。
     private readonly List<FenceControl> _fences = new();
     // 当前已归属任一 Fence 的 FilePath 集合，SetIcons 据此过滤散落区（避免归属图标重复显示）。
     private readonly HashSet<string> _fencedPaths = new(StringComparer.OrdinalIgnoreCase);
     // 最近一次 SetIcons 的输入快照；归属变化后用它重渲散落区（保证过滤生效）。
     private IReadOnlyList<IconItem> _allItems = Array.Empty<IconItem>();
-    // 散落图标项拖出候选状态（移动阈值检测，避免与双击 Open 冲突）。
-    private bool _iconDragArmed;
-    private string? _iconDragPath;
-    private Point _iconDragOrigin;
 
-    // ---------- T4：双击空白切可见性 ----------
-    // 全部散落图标 + 所有 FenceControl 的可见性开关。SetIcons 全量重渲时按此值设新元素 Visibility，保持隐藏状态跨重渲。
-    private bool _iconsVisible = true;
+    // ---------- P0-T2：散落图标数据驱动渲染 ----------
+    // 散落图标集合（增量驱动 ItemsControl）。SetIcons 过渡为 reconcile：Clear + 按 _fencedPaths 过滤 Add。
+    // WPF ItemContainerGenerator 在 Add/Remove 时只创建/销毁差异容器 = 免费增量 diff（替代 M2 Children.Clear+重建）。
+    private readonly ObservableCollection<IconItem> _looseIcons = new();
+
+    // R2 拖拽中容器回收：_draggedIcon 持 **IconItem 数据引用**（非 UI 容器）。
+    // DoDragDrop 期间若 sync 触发 reconcile 回收容器，path 已在 DoDragDrop 调用前 capture 为本地 string，拖拽不受影响。
+    private IconItem? _draggedIcon;
+    private Point _iconDragOrigin;     // arm 时鼠标位置（窗口坐标），超 MinimumDragDistance 才 DoDragDrop
+    private bool _iconDragArmed;       // 单击 arm；双击/松手/超阈值拖出 后清零（三守卫）
+    // 右键菜单目标图标（Opening 前 PreviewMouseRightButtonDown hit-test 捕获，Click 复用四项逻辑）。
+    private IconItem? _contextMenuIcon;
+
+    // ---------- T4：双击空白切可见性（R4：窗口级 DP，DataTemplate 绑它） ----------
+    // 散落图标 DataTemplate 根 StackPanel.Visibility 绑本 DP（RelativeSource AncestorType=Window）；
+    // 双击空白切它 → 所有散落图标项显隐由绑定自动同步；FenceControl 仍遍历 IconCanvas.Children 切 Visibility。
+    public static readonly DependencyProperty IconVisibilityProperty =
+        DependencyProperty.Register(nameof(IconVisibility), typeof(Visibility), typeof(IconLayerWindow),
+            new PropertyMetadata(Visibility.Visible));
+    public Visibility IconVisibility
+    {
+        get => (Visibility)GetValue(IconVisibilityProperty);
+        set => SetValue(IconVisibilityProperty, value);
+    }
 
     /// <param name="store">T7 注入的配置存储。null 仅用于设计器/极端场景（无持久化）。</param>
     public IconLayerWindow(IConfigStore? store = null)
     {
+        // P0-T2：DataTemplate 引用 {StaticResource FilePathToIconConverter}，须在 XAML 解析前注册。
+        // 共享同一份 IconExtractor（与所有 FenceControl 共用图标缓存）。
+        Resources["FilePathToIconConverter"] = new FilePathToIconConverter(_icons);
+
         InitializeComponent();
         _store = store ?? new NullConfigStore();
         SourceInitialized += (_, _) =>
@@ -64,6 +87,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
         };
+
+        // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
+        LooseItemsControl.ItemsSource = _looseIcons;
+        // 散落图标右键菜单（四项：打开/重命名/删除/打开文件位置）。Opening 前 PreviewMouseRightButtonDown hit-test 捕获 _contextMenuIcon。
+        LooseItemsControl.ContextMenu = BuildLooseIconContextMenu();
 
         // T7：启动防抖定时器（ThreadPool，一次性 due time）。
         _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -194,95 +222,24 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         SaveFencesDebounced(); // T7
     }
 
-    /// <summary>渲染散落图标列表（M1 单屏：简单网格排列，X/Y 来自 IconItem 或自动排）。
-    /// T3 关键协调：散落区排除「已归属任一 Fence」的 FilePath；FenceControl 在 Clear 后重 Add（状态保留）。
-    /// 被 DesktopSync.Changed 全量重渲调用时归属划分得以保持。</summary>
+    /// <summary>渲染散落图标列表（P0-T2：ObservableCollection 驱动 ItemsControl，替代 M2 全量 Clear+重建）。
+    /// 过渡实现：Clear + 按 <c>_fencedPaths</c> 过滤后逐个 Add（ItemContainerGenerator 只为新增项创建容器 = 增量）。
+    /// 无 <c>IconCanvas.Children.Clear</c>：LooseItemsControl 是 IconCanvas 持久子元素（XAML 声明），FenceControl 由 CreateFence 一次 Add。
+    /// T3 将把本方法进一步拆为 ApplySnapshot/ApplyDiff（真正单条增量）；此处仍是全量 reconcile 但不再闪屏/不再打断拖拽（R2 数据引用保护）。
+    /// X/Y 来自 IconItem（INPC）；快照无位置（<=0）则自动网格排（M1 行为保留），赋值触发 ItemContainerStyle 的 Canvas.Left/Top 绑定更新。</summary>
     public void SetIcons(IReadOnlyList<IconItem> items)
     {
         _allItems = items;
-        IconCanvas.Children.Clear();
-        // T4 协调：重 Add/重建的元素必须按当前 _iconsVisible 设 Visibility，否则 Sync/拖拽触发的重渲会把隐藏的图标冒回来。
-        var vis = _iconsVisible ? Visibility.Visible : Visibility.Collapsed;
-        // FenceControl 实例状态（含 ContentArea 归属图标）在内存；Clear 只断开视觉树，重 Add 后保留。
-        foreach (var f in _fences)
-        {
-            f.Visibility = vis;
-            IconCanvas.Children.Add(f);
-        }
-
+        _looseIcons.Clear();
         int col = 0, row = 0;
         foreach (var item in items)
         {
             if (_fencedPaths.Contains(item.FilePath)) continue; // 已归属，不显示在散落区
 
-            var img = new Image
-            {
-                Width = 32, Height = 32,
-                Source = _icons.GetIcon(item.FilePath),
-                Stretch = Stretch.Uniform
-            };
-            var label = new TextBlock
-            {
-                Text = item.DisplayName,
-                MaxWidth = 80,
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
-                Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
-                Padding = new Thickness(2, 0, 2, 0)
-            };
-            var panel = new StackPanel { Width = 80 };
-            panel.Children.Add(img);
-            panel.Children.Add(label);
-            // T4 协调：新建散落 panel 默认 Visible，隐藏状态下必须显式 Collapsed。
-            panel.Visibility = vis;
-
-            double x = item.X > 0 ? item.X : 16 + col * 90;
-            double y = item.Y > 0 ? item.Y : 16 + row * 96;
-            Canvas.SetLeft(panel, x);
-            Canvas.SetTop(panel, y);
-            panel.Tag = item.FilePath;
-            // T5：散落图标右键菜单（四项）。右键(MouseRightButton/ContextMenu)与左键双击Open/左键拖拽是不同事件，不冲突。
-            panel.ContextMenu = BuildIconContextMenu(item.FilePath);
-            panel.MouseLeftButtonDown += (_, e) =>
-            {
-                // 双击 Open（保留 M1 行为）；单击 arm 拖拽候选。双击不 arm，避免双击后误触发拖拽。
-                if (e is MouseButtonEventArgs m && m.ClickCount >= 2)
-                {
-                    // review-finding 1：双击 = 两次 down，第一次(ClickCount=1)已 arm。
-                    // 若不清零，双击第二次 down 后保持按住并移动 → MouseMove 满足 armed+Pressed+超阈值 → 误触 DoDragDrop。
-                    _iconDragArmed = false;
-                    _iconDragPath = null;
-                    Open((string)panel.Tag);
-                    return;
-                }
-                _iconDragArmed = true;
-                _iconDragPath = (string)panel.Tag;
-                _iconDragOrigin = e.GetPosition(this);
-            };
-            // review-finding 2：单击松手未移动 → 清 armed（与 FenceControl 内容图标 img.MouseLeftButtonUp 对称，
-            // 避免 armed 残留到下次 down 叠加误触）。
-            panel.MouseLeftButtonUp += (_, _) =>
-            {
-                _iconDragArmed = false;
-                _iconDragPath = null;
-            };
-            // 拖出：左键按下且移动超阈值 → DoDragDrop（data=FilePath 字符串，DragDropEffects.Move）。
-            panel.MouseMove += (_, e) =>
-            {
-                if (!_iconDragArmed || _iconDragPath is null) return;
-                if (e.LeftButton != MouseButtonState.Pressed) return;
-                var pos = e.GetPosition(this);
-                if (Math.Abs(pos.X - _iconDragOrigin.X) > SystemParameters.MinimumHorizontalDragDistance ||
-                    Math.Abs(pos.Y - _iconDragOrigin.Y) > SystemParameters.MinimumVerticalDragDistance)
-                {
-                    var path = _iconDragPath;
-                    _iconDragArmed = false;
-                    _iconDragPath = null;
-                    DragDrop.DoDragDrop(panel, path, DragDropEffects.Move);
-                }
-            };
-            IconCanvas.Children.Add(panel);
+            // 自动网格排（快照无位置时）。对 IconItem 赋值 → INPC → ItemContainerStyle 的 Canvas.Left/Top 绑定刷新。
+            if (item.X <= 0) item.X = 16 + col * 90;
+            if (item.Y <= 0) item.Y = 16 + row * 96;
+            _looseIcons.Add(item);
 
             if (++col >= 10) { col = 0; row++; }
         }
@@ -453,16 +410,19 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     {
         if (e.ClickCount < 2) return;
         // hit-test：只有命中画布空白本身（OriginalSource 是 IconCanvas）才触发隐藏/显示。
-        // 点散落图标（StackPanel/Image/TextBlock）或 FenceControl 子元素时，OriginalSource 是这些子元素而非 Canvas，
-        // 不触发本逻辑（交给图标的 panel 双击 Open / 盒子的交互）。Background=Transparent 使空白可被命中（null 背景不响应）。
+        // R1 穿透：散落图标的 ItemsPanel Background=null，空白不参与 hit-test → 点击穿透回 IconCanvas（OriginalSource==IconCanvas）；
+        // 点散落图标（StackPanel 内 Image/TextBlock，根 StackPanel Background=Transparent 命中）或 FenceControl 子元素时
+        // OriginalSource 是这些子元素而非 Canvas，不触发本逻辑（交给散落 Preview 双击 Open / 盒子交互）。
         if (!ReferenceEquals(e.OriginalSource, IconCanvas)) return;
-        _iconsVisible = !_iconsVisible;
-        var vis = _iconsVisible ? Visibility.Visible : Visibility.Collapsed;
-        // IconCanvas 直接子元素只有散落图标 StackPanel 和 FenceControl；只切这两类，不触碰其他可能元素。
+        // R4：切窗口级 IconVisibility DP。散落图标 DataTemplate.Visibility 绑它 → 所有散落项自动同步显隐。
+        IconVisibility = IconVisibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        var vis = IconVisibility;
+        // FenceControl 不在 DataTemplate 里，无法靠绑定；遍历 IconCanvas.Children 切 FenceControl.Visibility。
+        // LooseItemsControl 本身无需切（其内散落项已由绑定各自 Collapsed；空 ItemsControl 视觉为空，不影响）。
         foreach (UIElement child in IconCanvas.Children)
         {
-            if (child is StackPanel or FenceControl)
-                child.Visibility = vis;
+            if (child is FenceControl fence)
+                fence.Visibility = vis;
         }
         e.Handled = true;
     }
@@ -473,20 +433,82 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         catch { /* M1 真机验收记录失败 case */ }
     }
 
-    // ---------- T5：散落图标右键菜单（打开 / 重命名 / 删除 / 打开文件位置） ----------
+    // ---------- P0-T2：散落图标拖拽（R2/R3 三守卫，Layouter 数据引用模式）+ 右键 ----------
 
-    /// <summary>构造散落图标右键菜单。只作用于散落区（FenceControl 内容图标右键不在本任务）。</summary>
-    private ContextMenu BuildIconContextMenu(string path)
+    /// <summary>沿可视树向上找 DataContext 为 <see cref="IconItem"/> 的元素（DataTemplate 内 ContentPresenter 及其子元素均继承该 DataContext）。</summary>
+    private static IconItem? FindIconFromSource(object? source)
+    {
+        var el = source as DependencyObject;
+        while (el is not null)
+        {
+            if (el is FrameworkElement fe && fe.DataContext is IconItem icon) return icon;
+            el = VisualTreeHelper.GetParent(el);
+        }
+        return null;
+    }
+
+    /// <summary>隧道 PreviewDown：双击 Open（清 armed 不 arm）；单击 arm（持数据引用）。三守卫之一。</summary>
+    private void Loose_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var icon = FindIconFromSource(e.OriginalSource);
+        if (icon is null) return;
+        // review-finding 1：双击=两次 down，第一次(ClickCount=1)已 arm。第二次 down 必须清 armed，
+        // 否则双击后保持按住+移动 → MouseMove 满足 armed+Pressed+超阈值 → 误触 DoDragDrop。
+        if (e.ClickCount >= 2)
+        {
+            _iconDragArmed = false;
+            _draggedIcon = null;
+            Open(icon.FilePath);
+            return;
+        }
+        _iconDragArmed = true;
+        _draggedIcon = icon; // R2：IconItem 数据引用，非 UI 容器
+        _iconDragOrigin = e.GetPosition(this);
+    }
+
+    /// <summary>review-finding 2：单击松手未移动 → 清 armed（防 armed 残留到下次 down 叠加误触）。三守卫之二。</summary>
+    private void Loose_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _iconDragArmed = false;
+        _draggedIcon = null;
+    }
+
+    /// <summary>Move 超 MinimumDragDistance 才 DoDragDrop（三守卫之三）。
+    /// R2：path 在 DoDragDrop 前 capture 为本地 string，DoDragDrop 期间容器回收（sync 触发 reconcile）不影响拖拽数据。</summary>
+    private void Loose_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_iconDragArmed || _draggedIcon is null) return;
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        var pos = e.GetPosition(this);
+        if (Math.Abs(pos.X - _iconDragOrigin.X) > SystemParameters.MinimumHorizontalDragDistance ||
+            Math.Abs(pos.Y - _iconDragOrigin.Y) > SystemParameters.MinimumVerticalDragDistance)
+        {
+            var path = _draggedIcon.FilePath; // capture（拖拽期间 _draggedIcon 可能被清）
+            _iconDragArmed = false;
+            _draggedIcon = null;
+            // 拖源用 LooseItemsControl（根 ItemsControl，稳定不回收）；data=FilePath 字符串 → Fence_Drop/IconCanvas_Drop 按 Text 读。
+            DragDrop.DoDragDrop(LooseItemsControl, path, DragDropEffects.Move);
+        }
+    }
+
+    /// <summary>右键按下时 hit-test 捕获目标图标（供 ContextMenu 四项 Click 复用）。不设 Handled → ContextMenu 正常打开。</summary>
+    private void Loose_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _contextMenuIcon = FindIconFromSource(e.OriginalSource);
+    }
+
+    /// <summary>构造散落图标右键菜单（四项）。挂 LooseItemsControl.ContextMenu；Opening 前 PreviewMouseRightButtonDown 已捕 _contextMenuIcon。</summary>
+    private ContextMenu BuildLooseIconContextMenu()
     {
         var menu = new ContextMenu();
         var miOpen = new MenuItem { Header = "打开" };
-        miOpen.Click += (_, _) => Open(path);
+        miOpen.Click += (_, _) => { if (_contextMenuIcon is not null) Open(_contextMenuIcon.FilePath); };
         var miRename = new MenuItem { Header = "重命名" };
-        miRename.Click += (_, _) => RenameIcon(path);
+        miRename.Click += (_, _) => { if (_contextMenuIcon is not null) RenameIcon(_contextMenuIcon.FilePath); };
         var miDelete = new MenuItem { Header = "删除" };
-        miDelete.Click += (_, _) => DeleteIcon(path);
+        miDelete.Click += (_, _) => { if (_contextMenuIcon is not null) DeleteIcon(_contextMenuIcon.FilePath); };
         var miLocate = new MenuItem { Header = "打开文件位置" };
-        miLocate.Click += (_, _) => OpenFileLocation(path);
+        miLocate.Click += (_, _) => { if (_contextMenuIcon is not null) OpenFileLocation(_contextMenuIcon.FilePath); };
         menu.Items.Add(miOpen);
         menu.Items.Add(miRename);
         menu.Items.Add(miDelete);
