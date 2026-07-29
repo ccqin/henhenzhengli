@@ -1,4 +1,3 @@
-using System.IO;
 using DesktopManager.Core.Models;
 
 namespace DesktopManager.Core.Services;
@@ -45,8 +44,8 @@ public static class IconSetReconciler
     }
 
     /// <summary>增量对账（sync.Changed 用）。
-    /// <para>toAdd = <paramref name="diff"/>.Added 中非 fenced 的；新建 IconItem（X/Y=0 待网格排），
-    /// DisplayName=Path.GetFileName（与 <c>DesktopSnapshot</c> 一致）。</para>
+    /// <para>toAdd = <paramref name="diff"/>.Added 中非 fenced 且非 loose 的；复用 diff.Added 原项引用
+    ///（<c>DesktopSnapshot</c> 已设 DisplayName=Path.GetFileName、X/Y=0），ApplyDiff 据此同实例填 _allItems 与 _looseIcons。</para>
     /// <para>toRemove = <paramref name="diff"/>.Removed 中实际仍出现在 <paramref name="currentLoose"/> 的 FilePath（按 path 匹配）。
     /// 不在 currentLoose 的 Removed（如原本就 fenced）不返回，避免无意义删除。</para>
     /// <para>R9 rename：DesktopDiff 已拆 Removed(旧)+Added(新)，两端各自处理 → 旧名移除、新名加入。</para></summary>
@@ -55,16 +54,18 @@ public static class IconSetReconciler
         IReadOnlySet<string> fencedPaths,
         IReadOnlyList<IconItem> currentLoose)
     {
+        var loosePaths = new HashSet<string>(currentLoose.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var li in currentLoose) loosePaths.Add(li.FilePath);
+
         var toAdd = new List<IconItem>();
         foreach (var added in diff.Added)
         {
             if (fencedPaths.Contains(added.FilePath)) continue; // 属 Fence，散落区不管
-            // 新建 IconItem（X/Y=0 待 ApplyDiff 网格排）；DisplayName 用文件名。
-            toAdd.Add(new IconItem(added.FilePath, Path.GetFileName(added.FilePath), 0, 0));
+            if (loosePaths.Contains(added.FilePath)) continue;  // 已在散落区，不重加（与 PlanSnapshot 对称防御）
+            // 复用 diff.Added 原项（DesktopSnapshot 已设 DisplayName=文件名、X/Y=0），
+            // 保证 ApplyDiff 填 _allItems 与 _looseIcons 为同一实例（消除双实例，T6 单实例零歧义）。
+            toAdd.Add(added);
         }
-
-        var loosePaths = new HashSet<string>(currentLoose.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var li in currentLoose) loosePaths.Add(li.FilePath);
 
         var toRemove = new List<string>();
         foreach (var rem in diff.Removed)

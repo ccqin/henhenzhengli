@@ -86,6 +86,18 @@ public class IconSetReconcilerTests
         Assert.Equal(r1.toRemove.Select(i => i.DisplayName), r2.toRemove.Select(i => i.DisplayName));
     }
 
+    [Fact]
+    public void PlanSnapshot_OrdinalIgnoreCase_MixedCasePath_TreatedAsSame()
+    {
+        // 匹配键 OrdinalIgnoreCase 显式验证：currentLoose 含 C:\a.txt，all 含 C:\A.TXT
+        // → 视为同一项，既不重复 Add，也不误 Remove。
+        var all = new[] { new IconItem("C:\\A.TXT", "A.TXT") };
+        var loose = new[] { new IconItem("C:\\a.txt", "a.txt") };
+        var (toAdd, toRemove) = IconSetReconciler.PlanSnapshot(all, Fenced(), loose);
+        Assert.Empty(toAdd);   // A.TXT 按 OrdinalIgnoreCase 已在 loose(a.txt)，不重加
+        Assert.Empty(toRemove); // a.txt 按 OrdinalIgnoreCase 仍在 all(A.TXT)，不删
+    }
+
     // ---------- PlanDiff ----------
 
     [Fact]

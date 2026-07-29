@@ -238,22 +238,26 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     /// <summary>P0-T3：增量对账渲染（sync.Changed 用）。真正单条增量：Added→Add，Removed→Remove。
-    /// <para>_allItems 同步更新（移除 Removed / 追加 Added），保证后续 ApplySnapshot 兜底看到最新全集。</para>
-    /// <para>新 IconItem 的 DisplayName=Path.GetFileName（与 <c>DesktopSnapshot</c> 一致）；X/Y=0 待网格排。</para>
+    /// <para>_allItems 同步更新（移除 Removed / 追加 toAdd 原项），保证后续 ApplySnapshot 兜底看到最新全集。</para>
+    /// <para>复用 diff.Added 原项（DesktopSnapshot 已设 DisplayName=Path.GetFileName、X/Y=0 待网格排），
+    /// 同一批实例同时填 _allItems 与 _looseIcons —— review Minor 1：消除双实例。</para>
     /// <para>R9 rename：DesktopDiff 已拆 Removed(旧)+Added(新)，两端各自处理 → 旧名消失、新名出现。</para></summary>
     public void ApplyDiff(DesktopDiff diff)
     {
-        // 1. 更新 _allItems（全集）：移除 Removed 的 IconItem，追加 Added 的 IconItem。
-        var removedPaths = new HashSet<string>(diff.Removed.Select(r => r.FilePath), StringComparer.OrdinalIgnoreCase);
-        var rebuilt = new List<IconItem>(_allItems.Count + diff.Added.Count);
-        foreach (var existing in _allItems)
-            if (!removedPaths.Contains(existing.FilePath)) rebuilt.Add(existing);
-        foreach (var added in diff.Added) rebuilt.Add(added);
-        _allItems = rebuilt;
-
-        // 2. 增量 mutate _looseIcons（UI 线程，R7）。
+        // 1. 增量对账：先算 toAdd/toRemove。PlanDiff 复用 diff.Added 原项引用（review Minor 1：消除双实例）。
         var (toAdd, toRemove) = IconSetReconciler.PlanDiff(diff, _fencedPaths, _looseIcons);
 
+        // 2. 更新 _allItems（全集兜底）：移除 Removed，追加 toAdd 原项。
+        //    toAdd 与下面 _looseIcons 追加的同一批 IconItem 为同一实例 → T6 若
+        //    _looseIcons.Remove(_allItems.First(...)) 走引用相等命中，不再静默失败。
+        var removedPaths = new HashSet<string>(diff.Removed.Select(r => r.FilePath), StringComparer.OrdinalIgnoreCase);
+        var rebuilt = new List<IconItem>(_allItems.Count + toAdd.Count);
+        foreach (var existing in _allItems)
+            if (!removedPaths.Contains(existing.FilePath)) rebuilt.Add(existing);
+        foreach (var add in toAdd) rebuilt.Add(add);
+        _allItems = rebuilt;
+
+        // 3. 增量 mutate _looseIcons（UI 线程，R7）。
         // 倒序 RemoveAt：按 path 匹配删除，避免索引前移错位。
         var removeSet = new HashSet<string>(toRemove, StringComparer.OrdinalIgnoreCase);
         for (int i = _looseIcons.Count - 1; i >= 0; i--)
