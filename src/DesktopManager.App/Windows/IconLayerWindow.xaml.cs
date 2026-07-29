@@ -42,7 +42,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private readonly List<FenceControl> _fences = new();
     // 当前已归属任一 Fence 的 FilePath 集合，ApplySnapshot/ApplyDiff 据此过滤散落区（避免归属图标重复显示）。
     private readonly HashSet<string> _fencedPaths = new(StringComparer.OrdinalIgnoreCase);
-    // 当前散落区全集快照（ApplySnapshot 设 / ApplyDiff 增量维护）；归属变化后用它重渲散落区（保证过滤生效）。
+    // 当前散落区全集快照（ApplySnapshot 设 / ApplyDiff 增量维护）。
+    // T6：OnFenceIconRemoved/DeleteFence 从中按 FilePath 找回 IconItem 单条回填 _looseIcons（保留原 X/Y 位置）。
     private IReadOnlyList<IconItem> _allItems = Array.Empty<IconItem>();
 
     // ---------- P0-T2：散落图标数据驱动渲染 ----------
@@ -197,8 +198,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         SaveFencesDebounced(); // T7
     }
 
-    /// <summary>删除本 Fence：确认 → 从 _fences 移除 + 画布移除 + 取消订阅 + 清理 _fencedPaths（图标回散落区）→ 重渲。
-    /// 关键：该 Fence 的 IconFilePaths 从 _fencedPaths 移除前，先检查无其他 Fence 仍归属（防跨 Fence 单归属误删）。</summary>
+    /// <summary>删除本 Fence：确认 → 从 _fences 移除 + 画布移除 + 取消订阅 + 释放归属（_fencedPaths 移除 + 单条回填散落区）。
+    /// 关键：该 Fence 的 IconFilePaths 从 _fencedPaths 移除前，先检查无其他 Fence 仍归属（防跨 Fence 单归属误删）。
+    /// T6：不调 ApplySnapshot/SetIcons，逐 path 单条 _looseIcons.Add（R5 顺序 + 无闪屏）。</summary>
     private void DeleteFence(FenceControl fence)
     {
         var title = fence.BuildConfig().Title;
@@ -212,13 +214,17 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         fence.IconAdded -= OnFenceIconAdded;
         fence.IconRemoved -= OnFenceIconRemoved;
         fence.ConfigChanged -= OnFenceConfigChanged; // T7
-        // 释放归属：该 Fence 的图标若无其他 Fence 仍持有，从 _fencedPaths 移除 → ApplySnapshot 后回散落区。
+        // T6：释放归属 + 单条回填（替代 ApplySnapshot 全量兜底）。
+        // 该 Fence 的图标若无其他 Fence 仍持有（跨 Fence 单归属防误删），从 _fencedPaths 移除 + 从 _allItems 回填 _looseIcons。
+        // 先 _fences.Remove 再检查 _fences.Any(f.ContainsIcon) → fence 自身已排除，只跳过真正仍持有的其他 Fence。
         foreach (var path in paths)
         {
-            if (!_fences.Any(f => f.ContainsIcon(path)))
-                _fencedPaths.Remove(path);
+            if (_fences.Any(f => f.ContainsIcon(path))) continue; // 其他 Fence 仍持有，保留归属
+            _fencedPaths.Remove(path);
+            var it = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
+            if (it is null) it = new IconItem(path, Path.GetFileName(path));
+            if (!_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 网格排位，否则保留原位置；防重复
         }
-        ApplySnapshot(_allItems); // 重渲散落区（增量），被释放的图标回来
         SaveFencesDebounced(); // T7
     }
 
@@ -283,6 +289,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     private void OnFenceIconAdded(FenceControl fence, string filePath)
     {
+        // R5 顺序：_fencedPaths 先占位。防并发 sync.Changed→ApplyDiff/ApplySnapshot 把新归属图标误当散落补回
+        //（T6 去了归属兜底，但 sync 增量路径仍读 _fencedPaths，顺序必须保持）。
         _fencedPaths.Add(filePath);
         // review-finding 3：跨 Fence 迁移防双重归属。拖入本 fence 后，若 path 仍属其他 Fence（如从 A 拖到 B），
         // 把它从那些 Fence **静默**移除（RemoveIconSilent 不触发 IconRemoved）。
@@ -293,17 +301,22 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         {
             other.RemoveIconSilent(filePath);
         }
-        // 异步重渲散落区：不在 Drop 回调里同步改视觉树（避免事件源元素正被重渲的隐患，同 App.xaml.cs I-5 模式）。
-        // T3：ApplySnapshot 增量对账（仅移除新 fenced 项），T6 将改为单条 _looseIcons.Remove。
-        Dispatcher.BeginInvoke(new Action(() => ApplySnapshot(_allItems)));
+        // T6：单条增删（替代 ApplySnapshot 全量兜底）。OnFenceIconAdded 由 Fence_Drop→AddIcon→IconAdded 触发，
+        // 本身在 UI 线程，无需 Dispatcher.BeginInvoke（R7）。FilePath 匹配（T3 单实例下引用也命中，FilePath 更稳）。
+        var loose = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+        if (loose is not null) _looseIcons.Remove(loose);
         SaveFencesDebounced(); // T7：归属变化持久化
     }
 
     private void OnFenceIconRemoved(FenceControl fence, string filePath)
     {
         _fencedPaths.Remove(filePath);
-        // T3：ApplySnapshot 增量对账（新释放的 path 自动回填散落区），T6 将改为单条回填。
-        Dispatcher.BeginInvoke(new Action(() => ApplySnapshot(_allItems)));
+        // T6：单条回填（替代 ApplySnapshot 全量兜底）。从 _allItems 找回 IconItem（T3 单实例 → 保留拖入前的原 X/Y 位置）；
+        // 找不到（罕见：新文件被直接 fenced 且从未进散落区）则构造新项，AddLooseIcon 统一网格排位。
+        var it = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+        if (it is null) it = new IconItem(filePath, Path.GetFileName(filePath));
+        // 防重复事件：it 已在散落区则不重复 Add（Contains 走引用相等，T3 单实例下可靠）。
+        if (!_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 时网格排位，否则保留原位置
         SaveFencesDebounced(); // T7
     }
 
