@@ -68,10 +68,11 @@ public partial class FenceControl : UserControl
         ContentArea.Visibility = _folded ? Visibility.Collapsed : Visibility.Visible;
         FoldButton.Content = _folded ? "▸" : "▾";
         // T7：应用尺寸 W/H（>0 才覆盖；保留 XAML MinWidth 兜底）。
-        // 折叠交互：只切 ContentArea.Visibility，不动控件 Height —— 盒子高度恒定，内容隐藏其内，
-        // 行为可预测（Fences 风格），避免折叠后 BuildConfig 读到压缩的 ActualHeight 写回丢失展开尺寸。
         if (config.W > 0) Width = config.W;
         if (config.H > 0) Height = config.H;
+        // 折叠态启动：应用展开高度后强制 Height=NaN（Auto），让 Border 缩到标题栏（与运行期折叠一致，
+        // Fences 风格）。_config.H 已保存展开高度；展开态（_folded=false）保留上面 config.H 不覆盖。
+        if (_folded) Height = double.NaN;
     }
 
     /// <summary>返回反映当前 UI 状态（拖动后坐标、折叠态、标题、尺寸）的 FenceConfig，供 T7 持久化。</summary>
@@ -87,7 +88,9 @@ public partial class FenceControl : UserControl
             Y = double.IsNaN(y) ? _config.Y : y,
             // T7：读回控件实际尺寸（ActualWidth/Height 在 Measure 后有效；未挂画布时 NaN → 保留旧值）。
             W = !double.IsNaN(ActualWidth) && ActualWidth > 0 ? ActualWidth : _config.W,
-            H = !double.IsNaN(ActualHeight) && ActualHeight > 0 ? ActualHeight : _config.H,
+            // 折叠时 Height=NaN（Auto）→ ActualHeight 是压缩后的标题栏小高度，不能写回（否则丢失展开尺寸）。
+            // 改读 _config.H（折叠前已快照展开高度，见 FoldButton_Click）；展开时读 ActualHeight（resize 后更新）。
+            H = _folded ? _config.H : (!double.IsNaN(ActualHeight) && ActualHeight > 0 ? ActualHeight : _config.H),
         };
     }
 
@@ -306,9 +309,17 @@ public partial class FenceControl : UserControl
 
     private void FoldButton_Click(object sender, RoutedEventArgs e)
     {
+        // 折叠前快照当前展开高度到 _config.H（resize 后 ActualHeight 可能 > 旧 _config.H）。
+        // 供展开恢复（Height=_config.H）+ BuildConfig 折叠态读 _config.H 持久化，
+        // 避免 resize→折叠→展开 丢高度（_config.H 仅 Bind 时从磁盘读入，resize 不写回内存 _config）。
+        if (!_folded && !double.IsNaN(ActualHeight) && ActualHeight > 0)
+            _config = _config with { H = ActualHeight };
         _folded = !_folded;
         ContentArea.Visibility = _folded ? Visibility.Collapsed : Visibility.Visible;
         FoldButton.Content = _folded ? "▸" : "▾";
+        // 折叠：Height=NaN（Auto）让 Border 缩到标题栏（Fences 风格，只缩高宽不变）；
+        // 展开：恢复 _config.H（折叠前已快照，含 resize 后的最新展开高度）。
+        Height = _folded ? double.NaN : _config.H;
         // T7：折叠态变化 → 通知宿主持久化。
         ConfigChanged?.Invoke();
     }

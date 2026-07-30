@@ -300,15 +300,47 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         foreach (var add in toAdd) AddLooseIcon(add);
     }
 
-    /// <summary>网格排位 + Add：count = Add 前 <c>_looseIcons</c>.Count；X/Y&lt;=0 才赋值（保留已定位项）。
-    /// 赋值触发 INPC → ItemContainerStyle 的 Canvas.Left/Top 绑定刷新（T1 INPC 收益）。
-    /// 策略：16+(count%10)*90, 16+(count/10)*96（M1 网格行为，10 列宽 90 / 行高 96）。</summary>
+    /// <summary>网格排位 + Add：X/Y 均 &lt;=0（需自动排位）时找**空闲 slot**（不与现有 _looseIcons 重叠）；
+    /// 已定位项（X/Y&gt;0，如拖出回填保留原位）直接用原 X/Y。赋值触发 INPC → ItemContainerStyle 的
+    /// Canvas.Left/Top 绑定刷新（T1 INPC 收益）。网格：10 列宽 90 / 行高 96，原点 (16,16)（M1 排版）。
+    /// <para>真机修复（拖进拖出后重叠）：原先按 count 算 slot，拖入拖出后 _looseIcons 数量变化，count 算出的
+    /// slot 可能与保留原 X/Y 的现有图标撞上。改遍历网格找第一个空闲 slot（与现有图标 X/Y 均差 &lt;1 视为占用）。</para></summary>
     private void AddLooseIcon(IconItem item)
     {
-        int count = _looseIcons.Count;
-        if (item.X <= 0) item.X = 16 + (count % 10) * 90;
-        if (item.Y <= 0) item.Y = 16 + (count / 10) * 96;
+        // 仅当 X/Y 均 <=0（需自动排位）时找空闲 slot；半定位（一轴 >0 一轴 <=0）实际不出现（IconItem 默认 0/0，
+        // 回填保留双轴 >0），保守用“均 <=0”门控与原语义对齐。已定位项保留原 X/Y（如拖出回填、rename 项）。
+        if (item.X <= 0 && item.Y <= 0)
+        {
+            (item.X, item.Y) = FindFreeLooseSlot();
+        }
         _looseIcons.Add(item);
+    }
+
+    /// <summary>遍历 10 列网格（col=0..9, row=0..递增）找第一个不与现有 _looseIcons 重叠的 slot。
+    /// 重叠判定：与某现有图标 X 差 &lt;1 且 Y 差 &lt;1（同 slot）。槽位无限、图标有限 → 必终止。</summary>
+    private (double x, double y) FindFreeLooseSlot()
+    {
+        const double originX = 16, originY = 16;
+        const double stepX = 90, stepY = 96;
+        const int cols = 10;
+        for (int row = 0; ; row++)
+        {
+            for (int col = 0; col < cols; col++)
+            {
+                double x = originX + col * stepX;
+                double y = originY + row * stepY;
+                bool occupied = false;
+                foreach (var existing in _looseIcons)
+                {
+                    if (Math.Abs(existing.X - x) < 1 && Math.Abs(existing.Y - y) < 1)
+                    {
+                        occupied = true;
+                        break;
+                    }
+                }
+                if (!occupied) return (x, y);
+            }
+        }
     }
 
     // ---------- T3：Fence 归属事件回调 ----------
