@@ -444,19 +444,76 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     private void IconCanvas_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.Text) ? DragDropEffects.Move : DragDropEffects.None;
+        // FileDrop（外部文件从 explorer/文件夹拖入）或 Text（app 图标拖出空白）都接受 Move；其他 None。
+        // M2 真机修复前仅认 Text，导致外部文件拖到桌面无反馈、Drop 不处理 → 文件进不了桌面。
+        e.Effects = (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(DataFormats.Text))
+            ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void IconCanvas_Drop(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.Text)) { e.Handled = true; return; }
-        var path = (string)e.Data.GetData(DataFormats.Text);
-        // 定位该 FilePath 的归属 Fence；从其移除（触发 IconRemoved → 异步重渲散落区，图标自动回填）。
-        // 若 path 不属于任何 Fence（散落图标拖到空白），无 owner，什么都不做。
-        var owner = _fences.FirstOrDefault(f => f.ContainsIcon(path));
-        owner?.RemoveIcon(path);
-        e.Handled = true;
+        // 优先级：Text present → app 图标拖出空白（app 图标 DataObject 含 Text+FileDrop，但语义是
+        //   "从 Fence 移除归属回散落区"，文件本身已在桌面不应移动 → 走 Text 分支，不触发 FileDrop 移动）。
+        // 否则 FileDrop present → 外部文件移到桌面（explorer/文件夹拖入，仅 FileDrop 无 Text）。
+        // 两者都 present 必为 app 图标（见 Loose_PreviewMouseMove / FenceControl MouseMove 构造的 DataObject）。
+        if (e.Data.GetDataPresent(DataFormats.Text))
+        {
+            var path = (string)e.Data.GetData(DataFormats.Text);
+            // 定位该 FilePath 的归属 Fence；从其移除（触发 IconRemoved → 异步重渲散落区，图标自动回填）。
+            // 若 path 不属于任何 Fence（散落图标拖到空白），无 owner，什么都不做。
+            var owner = _fences.FirstOrDefault(f => f.ContainsIcon(path));
+            owner?.RemoveIcon(path);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            if (files is not null && files.Length > 0) MoveExternalFilesToDesktop(files);
+            e.Handled = true;
+            return;
+        }
+
+        e.Handled = true; // 其他格式：吞掉，避免冒泡到无处理者
+    }
+
+    /// <summary>把外部文件（非桌面）移到用户桌面。已在桌面（用户/公共）跳过；
+    /// 同名冲突递增 (2)…（不覆盖，与 explorer 命名一致）。跨卷 Move 失败降级 Copy+Delete。
+    /// 成功后 DesktopSync 的 FSW 自动检测 Created → Changed → ApplyDiff 增量渲染，无需手动刷新 IconLayer。</summary>
+    private void MoveExternalFilesToDesktop(string[] files)
+    {
+        var desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        // existing = 用户+公共桌面当前文件（判断"已在桌面" + 同名冲突基线）。公共桌面只读，仅作判断不写入。
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)
+        })
+        {
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                foreach (var f in Directory.EnumerateFiles(dir)) existing.Add(f);
+        }
+
+        var plans = DesktopDropPlanner.Plan(files, desktopDir, existing);
+        foreach (var p in plans)
+        {
+            if (p.Target is null) continue; // 已在桌面，跳过
+            try
+            {
+                // 跨卷 File.Move 抛 IOException → 降级 Copy + Delete（与 explorer 跨卷默认"复制"语义对齐，
+                // 但本工具按 DragDropEffects.Move 语义最终删除源，符合用户从文件夹"移到桌面"的预期）。
+                try { File.Move(p.Source, p.Target); }
+                catch (IOException) { File.Copy(p.Source, p.Target); File.Delete(p.Source); }
+            }
+            catch (Exception ex)
+            {
+                // 单文件失败不中断其余（权限/占用/源只读等）。FSW 后续对账兜底；错误可见于日志便于诊断。
+                Log.Warning(ex, "IconCanvas_Drop：移动外部文件 {Source} -> {Target} 失败", p.Source, p.Target);
+            }
+        }
     }
 
     // ---------- T4：双击画布空白切可见性 ----------
@@ -541,8 +598,14 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             var path = _draggedIcon.FilePath; // capture（拖拽期间 _draggedIcon 可能被清）
             _iconDragArmed = false;
             _draggedIcon = null;
-            // 拖源用 LooseItemsControl（根 ItemsControl，稳定不回收）；data=FilePath 字符串 → Fence_Drop/IconCanvas_Drop 按 Text 读。
-            DragDrop.DoDragDrop(LooseItemsControl, path, DragDropEffects.Move);
+            // M2 真机修复：DataObject 同时含 FileDrop（explorer/文件夹认这个 + 系统拖拽视觉反馈）
+            // + Text（兼容 Fence_Drop / IconCanvas_Drop 按 Text 读 app 图标归属）。
+            // 单纯 Text 格式 explorer 不认 → 拖到文件夹无反应且无拖拽图标反馈。
+            var data = new DataObject();
+            data.SetData(DataFormats.FileDrop, new[] { path });
+            data.SetData(DataFormats.Text, path);
+            // 拖源用 LooseItemsControl（根 ItemsControl，稳定不回收）。
+            DragDrop.DoDragDrop(LooseItemsControl, data, DragDropEffects.Move);
         }
     }
 

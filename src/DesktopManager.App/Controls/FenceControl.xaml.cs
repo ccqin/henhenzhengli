@@ -210,7 +210,12 @@ public partial class FenceControl : UserControl
                 var path = _contentDragPath;
                 _contentDragArmed = false;
                 _contentDragPath = null;
-                DragDrop.DoDragDrop(panel, path, DragDropEffects.Move);
+                // M2 真机修复：DataObject 同时含 FileDrop（explorer/文件夹认 + 系统拖拽反馈）+ Text
+                // （兼容 Fence_Drop / IconCanvas_Drop 按 Text 读）。与散落图标 Loose_PreviewMouseMove 对称。
+                var data = new DataObject();
+                data.SetData(DataFormats.FileDrop, new[] { path });
+                data.SetData(DataFormats.Text, path);
+                DragDrop.DoDragDrop(panel, data, DragDropEffects.Move);
             }
         };
         panel.MouseLeftButtonUp += (_, _) =>
@@ -228,13 +233,17 @@ public partial class FenceControl : UserControl
 
     private void Fence_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(DataFormats.Text) ? DragDropEffects.Move : DragDropEffects.None;
+        // 只认 Text（app 图标拖入 Fence 归属）。FileDrop（外部文件）不 Handled → 冒泡到 IconCanvas_DragOver
+        // （IconCanvas 把外部文件移到桌面散落区）。避免 Fence 覆盖区域对外部文件显示"禁止"光标的体验割裂。
+        if (!e.Data.GetDataPresent(DataFormats.Text)) return;
+        e.Effects = DragDropEffects.Move;
         e.Handled = true;
     }
 
     private void Fence_Drop(object sender, DragEventArgs e)
     {
-        if (!e.Data.GetDataPresent(DataFormats.Text)) { e.Handled = true; return; }
+        // 非 Text（外部文件 FileDrop）不 Handled → 冒泡到 IconCanvas_Drop（移到桌面散落区，不加入本 Fence）。
+        if (!e.Data.GetDataPresent(DataFormats.Text)) return;
         var path = (string)e.Data.GetData(DataFormats.Text);
         AddIcon(path); // 去重 + 渲染 + 触发 IconAdded（宿主据此更新散落区）
         e.Handled = true; // 阻止冒泡到 IconCanvas，否则宿主会误当「拖出到空白」处理
