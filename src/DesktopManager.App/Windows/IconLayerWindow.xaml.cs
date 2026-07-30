@@ -250,7 +250,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <para>_allItems 同步更新（移除 Removed / 追加 toAdd 原项），保证后续 ApplySnapshot 兜底看到最新全集。</para>
     /// <para>复用 diff.Added 原项（DesktopSnapshot 已设 DisplayName=Path.GetFileName、X/Y=0 待网格排），
     /// 同一批实例同时填 _allItems 与 _looseIcons —— review Minor 1：消除双实例。</para>
-    /// <para>R9 rename：DesktopDiff 已拆 Removed(旧)+Added(新)，两端各自处理 → 旧名消失、新名出现。</para></summary>
+    /// <para>R9 rename：DesktopDiff 已拆 Removed(旧)+Added(新)，两端各自处理 → 旧名消失、新名出现。</para>
+    /// <para>review Important（Fence 死链）：Removed 中属 _fencedPaths 的 path（拖 Fence 图标到 explorer/文件夹
+    /// → 文件移走→FSW Deleted），静默清归属 Fence（RemoveIconSilent）+ _fencedPaths 移除 + SaveFencesDebounced，
+    /// 避免 Fence 残留死链 + config 持久化死 path。</para></summary>
     public void ApplyDiff(DesktopDiff diff)
     {
         // 1. 增量对账：先算 toAdd/toRemove。PlanDiff 复用 diff.Added 原项引用（review Minor 1：消除双实例）。
@@ -266,8 +269,28 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         foreach (var add in toAdd) rebuilt.Add(add);
         _allItems = rebuilt;
 
-        // 3. 增量 mutate _looseIcons（UI 线程，R7）。
-        // 倒序 RemoveAt：按 path 匹配删除，避免索引前移错位。
+        // 3. review Important：Fence 死链清除。拖 Fence 内容图标到 explorer/文件夹（76d7aff 开通）→
+        //    文件被移走 → DesktopSync FSW Deleted → ApplyDiff(diff.Removed 含该 fenced path)。PlanDiff 只按
+        //    loosePaths 过滤 Removed（fenced path 不在散落区 → toRemove 不含它）→ Fence _contentIcons/_config
+        //    残留死链，且 SaveFencesDebounced 把死 path 持久化进 config（重启仍在，Open 静默失败）。
+        //    这里新增：Removed path ∈ _fencedPaths 时，静默清归属 Fence（RemoveIconSilent 不触发 IconRemoved →
+        //    不会回填散落区——文件确实已不在磁盘）+ _fencedPaths.Remove + 防抖 Save（config 不持久化死 path）。
+        //    单归属不变式：OnFenceIconAdded 已用 RemoveIconSilent 保证一 path 至多属一 Fence；Where 全清是
+        //    防御性（旧 config 万一多 Fence 含同 path，一次性清干净，与 OnFenceIconAdded 对称）。顺序在
+        //    _looseIcons mutate 前：PlanDiff 已过滤 fenced，下面 _looseIcons 逻辑不会重复处理这些 path。
+        bool fenceChanged = false;
+        foreach (var path in removedPaths)
+        {
+            if (!_fencedPaths.Contains(path)) continue; // 散落区 path：交给下面 _looseIcons 逻辑
+            foreach (var f in _fences.Where(f => f.ContainsIcon(path)))
+                f.RemoveIconSilent(path);
+            _fencedPaths.Remove(path);
+            fenceChanged = true;
+        }
+        if (fenceChanged) SaveFencesDebounced();
+
+        // 4. 增量 mutate _looseIcons（UI 线程，R7）。
+        //    倒序 RemoveAt：按 path 匹配删除，避免索引前移错位。
         var removeSet = new HashSet<string>(toRemove, StringComparer.OrdinalIgnoreCase);
         for (int i = _looseIcons.Count - 1; i >= 0; i--)
         {
@@ -501,6 +524,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         foreach (var p in plans)
         {
             if (p.Target is null) continue; // 已在桌面，跳过
+            // Minor 2：跳过目录（File.Move 对目录抛异常；M2 范围仅文件，目录拖入 YAGNI）。
+            // Plan 是纯函数不碰 FS（单测隔离），目录守卫留在调用方，保持 Plan 决策可单测。
+            if (Directory.Exists(p.Source)) continue;
             try
             {
                 // 跨卷 File.Move 抛 IOException → 降级 Copy + Delete（与 explorer 跨卷默认"复制"语义对齐，

@@ -42,7 +42,10 @@ public static class DesktopDropPlanner
             }
 
             var name = Path.GetFileName(src);
-            // 无文件名（如目录拖入或根路径）→ 跳过（M2 范围仅文件；目录拖入 YAGNI）
+            // 仅有文件名才规划（根路径如 "C:\" → GetFileName 返回空 → 跳过）。
+            // 注意订正：带名目录（如 "C:\folder"）GetFileName 返回 "folder"（非空）会被当目标处理，
+            // 而非返回空跳过——M2 范围仅文件，调用方（MoveExternalFilesToDesktop）用 Directory.Exists 守卫
+            // 跳过目录；本纯函数不碰 FS（保持单测隔离），不在此判断文件/目录。
             if (string.IsNullOrEmpty(name)) continue;
 
             var target = Path.Combine(desktopDir, name);
