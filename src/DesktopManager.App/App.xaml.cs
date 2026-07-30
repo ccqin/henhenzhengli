@@ -3,6 +3,7 @@ using System.Windows;
 using DesktopManager.App.Logging;
 using DesktopManager.App.Windows;
 using DesktopManager.Core.Services;
+using DesktopManager.Native;
 using H.NotifyIcon;
 using Serilog;
 
@@ -42,6 +43,12 @@ public partial class App : Application
                 Log.Information("--restore-icons 模式：恢复桌面图标（含 WM_SETTINGCHANGE 广播）后退出。");
                 var restoreGuard = new RecoveryGuard();
                 restoreGuard.RestoreExplorer();
+                // I-3 真机根因：登录时 explorer 刚启动未就绪 → RestoreExplorer 的 WM_SETTINGCHANGE 广播被时序吞
+                // （真机证据：日志确认 --restore-icons 跑了、HideIcons 已写 0，但桌面图标一直空）。
+                // 修法：强制重启 explorer 进程 → 新 explorer 启动时重新读 HideIcons=0 → 桌面图标显示。
+                // 不再靠广播（explorer 未就绪时不可靠），改让 explorer 重读注册表，消除时序赌博。
+                // AutoRestartShell 自动拉起 explorer；若被禁则 ExplorerRestarter 内部兜底主动 Start。仅此崩溃恢复路径调用（disruptive：任务栏闪一下）。
+                ExplorerRestarter.Restart();
             }
             catch (System.Exception ex)
             {
