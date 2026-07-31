@@ -27,7 +27,12 @@ public sealed class ConfigStore : IConfigStore
             var json = File.ReadAllText(_path);
             var cfg = JsonSerializer.Deserialize<AppConfig>(json, Options)
                       ?? new AppConfig();
-            return cfg with { Fences = cfg.Fences ?? Array.Empty<FenceConfig>() };
+            // Fences/IconPositions 防御性 null-coalesce：旧 config（无 IconPositions 字段）或 JSON 显式 null 时兜底空集合。
+            return cfg with
+            {
+                Fences = cfg.Fences ?? Array.Empty<FenceConfig>(),
+                IconPositions = cfg.IconPositions ?? Array.Empty<IconPosition>()
+            };
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {

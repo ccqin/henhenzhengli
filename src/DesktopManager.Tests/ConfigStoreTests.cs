@@ -135,4 +135,62 @@ public class ConfigStoreTests
         Assert.NotNull(f.IconFilePaths);
         Assert.Empty(f.IconFilePaths);
     }
+
+    [Fact]
+    public void Save_Load_RoundTrips_IconPositions()
+    {
+        // 自由摆放：散落图标持久化位置 round-trip（含小数坐标 + 多条目 + 中文路径）。
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            var store = new ConfigStore(path);
+            var config = new AppConfig
+            {
+                IconPositions = new[]
+                {
+                    new IconPosition(@"C:\Users\a\桌面\记事本.lnk", 123.45, 678.9),
+                    new IconPosition(@"D:\work\report.docx", 0, 0),
+                    new IconPosition(@"C:\b.txt", 16, 16)
+                }
+            };
+
+            store.Save(config);
+            var loaded = store.Load();
+
+            Assert.Equal(3, loaded.IconPositions.Count);
+            Assert.Equal(@"C:\Users\a\桌面\记事本.lnk", loaded.IconPositions[0].FilePath);
+            Assert.Equal(123.45, loaded.IconPositions[0].X);
+            Assert.Equal(678.9, loaded.IconPositions[0].Y);
+            Assert.Equal(@"D:\work\report.docx", loaded.IconPositions[1].FilePath);
+            Assert.Equal(0, loaded.IconPositions[1].X);
+            Assert.Equal(@"C:\b.txt", loaded.IconPositions[2].FilePath);
+            Assert.Equal(16, loaded.IconPositions[2].Y);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
+
+    [Fact]
+    public void AppConfig_Default_IconPositions_Empty()
+    {
+        // 默认值：新 AppConfig 无 IconPositions → 空集合（非 null），ConfigStore.Load 缺字段也走此默认。
+        var cfg = new AppConfig();
+        Assert.NotNull(cfg.IconPositions);
+        Assert.Empty(cfg.IconPositions);
+    }
+
+    [Fact]
+    public void Load_OldConfigWithoutIconPositions_ReturnsEmpty()
+    {
+        // 兼容旧 config（自由摆放前的版本，无 IconPositions 字段）→ Load 不抛、返回空集合。
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            File.WriteAllText(path, @"{ ""HideExplorerIcons"": true, ""Fences"": [] }");
+            var store = new ConfigStore(path);
+            var loaded = store.Load();
+            Assert.NotNull(loaded.IconPositions);
+            Assert.Empty(loaded.IconPositions);
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+    }
 }

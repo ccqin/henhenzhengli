@@ -51,6 +51,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     // WPF ItemContainerGenerator 在 Add/Remove 时只创建/销毁差异容器 = 免费增量 diff（替代 M2 Children.Clear+重建）。
     private readonly ObservableCollection<IconItem> _looseIcons = new();
 
+    // 自由摆放：散落图标持久化位置缓存（仅启动加载用，运行期不更新——BuildAppConfigForSave 直接读 _looseIcons）。
+    // AddLooseIcon 在 X/Y<=0 时优先查此缓存，命中用存的 X/Y（重启保持），否则 FindFreeLooseSlot 网格排位。
+    // key=FilePath（OrdIgnoreCase）；OrdIgnoreCase 与 _fencedPaths 一致，避免大小写差异导致 cache miss。
+    private readonly Dictionary<string, (double X, double Y)> _iconPositions = new(StringComparer.OrdinalIgnoreCase);
+
     // R2 拖拽中容器回收：_draggedIcon 持 **IconItem 数据引用**（非 UI 容器）。
     // DoDragDrop 期间若 sync 触发 reconcile 回收容器，path 已在 DoDragDrop 调用前 capture 为本地 string，拖拽不受影响。
     private IconItem? _draggedIcon;
@@ -58,6 +63,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private bool _iconDragArmed;       // 单击 arm；双击/松手/超阈值拖出 后清零（三守卫）
     // 右键菜单目标图标（Opening 前 PreviewMouseRightButtonDown hit-test 捕获，Click 复用四项逻辑）。
     private IconItem? _contextMenuIcon;
+
+    // 自由摆放：IconCanvas_Drop 记录 Drop 位置（LooseItemsControl 坐标系，与 IconItem.X/Y 一致），
+    // 供 OnFenceIconRemoved 回填（Fence 图标拖出空白 → 落到 Drop 位置，而非网格/原位）。
+    // 一次性：OnFenceIconRemoved 读后立即清 null（防下次非 Drop 触发的 RemoveIcon 误用残留值）。
+    private Point? _dropPosition;
 
     // ---------- T4：双击空白切可见性（R4：窗口级 DP，DataTemplate 绑它） ----------
     // 散落图标 DataTemplate 根 StackPanel.Visibility 绑本 DP（RelativeSource AncestorType=Window）；
@@ -137,6 +147,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 continue;
             }
         }
+
+        // 自由摆放：加载散落图标持久化位置 → 填 _iconPositions 缓存（AddLooseIcon 优先用，重启保持位置）。
+        // 后写赢：同 path 重复条目（旧 config 数据问题）取列表最后一个，与"最新覆盖"语义一致。
+        foreach (var ip in config.IconPositions) _iconPositions[ip.FilePath] = (ip.X, ip.Y);
     }
 
     /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
@@ -301,17 +315,28 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     /// <summary>网格排位 + Add：X/Y 均 &lt;=0（需自动排位）时找**空闲 slot**（不与现有 _looseIcons 重叠）；
-    /// 已定位项（X/Y&gt;0，如拖出回填保留原位）直接用原 X/Y。赋值触发 INPC → ItemContainerStyle 的
+    /// 已定位项（X/Y&gt;0，如拖出回填保留原位、自由摆放拖到的位置）直接用原 X/Y。赋值触发 INPC → ItemContainerStyle 的
     /// Canvas.Left/Top 绑定刷新（T1 INPC 收益）。网格：10 列宽 90 / 行高 96，原点 (16,16)（M1 排版）。
     /// <para>真机修复（拖进拖出后重叠）：原先按 count 算 slot，拖入拖出后 _looseIcons 数量变化，count 算出的
-    /// slot 可能与保留原 X/Y 的现有图标撞上。改遍历网格找第一个空闲 slot（与现有图标 X/Y 均差 &lt;1 视为占用）。</para></summary>
+    /// slot 可能与保留原 X/Y 的现有图标撞上。改遍历网格找第一个空闲 slot（与现有图标 X/Y 均差 &lt;1 视为占用）。</para>
+    /// <para>自由摆放（位置优先级，X/Y 均&lt;=0 时）：① <see cref="_iconPositions"/> 命中 → 用持久化的 X/Y
+    /// （重启保持）；② 否则 <see cref="FindFreeLooseSlot"/> 网格排位。</para></summary>
     private void AddLooseIcon(IconItem item)
     {
-        // 仅当 X/Y 均 <=0（需自动排位）时找空闲 slot；半定位（一轴 >0 一轴 <=0）实际不出现（IconItem 默认 0/0，
-        // 回填保留双轴 >0），保守用“均 <=0”门控与原语义对齐。已定位项保留原 X/Y（如拖出回填、rename 项）。
+        // 仅当 X/Y 均 <=0（需自动排位）时定位；半定位（一轴 >0 一轴 <=0）实际不出现（IconItem 默认 0/0，
+        // 回填/自由摆放保留双轴 >0），保守用“均 <=0”门控与原语义对齐。已定位项保留原 X/Y（如拖出回填、自由摆放）。
         if (item.X <= 0 && item.Y <= 0)
         {
-            (item.X, item.Y) = FindFreeLooseSlot();
+            // 自由摆放：优先用持久化位置（重启保持），无记录才网格排位。
+            if (_iconPositions.TryGetValue(item.FilePath, out var saved))
+            {
+                item.X = saved.X;
+                item.Y = saved.Y;
+            }
+            else
+            {
+                (item.X, item.Y) = FindFreeLooseSlot();
+            }
         }
         _looseIcons.Add(item);
     }
@@ -369,6 +394,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private void OnFenceIconRemoved(FenceControl fence, string filePath)
     {
         _fencedPaths.Remove(filePath);
+        // 自由摆放：若由 IconCanvas_Drop（Fence 图标拖出空白）触发，_dropPosition 含 Drop 位置 → 回填落到 Drop 位置。
+        // 读后立即清 null（一次性：防下次非 Drop 触发的 RemoveIcon 误用残留值，如 FenceControl 内部右键移除）。
+        var dropPos = _dropPosition;
+        _dropPosition = null;
         // T6：单条回填（替代 ApplySnapshot 全量兜底）。从 _allItems 找回 IconItem（T3 单实例 → 保留拖入前的原 X/Y 位置）；
         // 找不到（罕见：新文件被直接 fenced 且从未进散落区）则构造新项，AddLooseIcon 统一网格排位。
         var it = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
@@ -377,7 +406,16 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 文件不存在则 it 保持 null，下方 Add 跳过（不加幽灵、不 NRE）。
         if (it is null && File.Exists(filePath)) it = new IconItem(filePath, Path.GetFileName(filePath));
         // 防重复事件：it 已在散落区则不重复 Add（Contains 走引用相等，T3 单实例下可靠）。
-        if (it is not null && !_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 时网格排位，否则保留原位置
+        if (it is not null && !_looseIcons.Contains(it))
+        {
+            // dropPos 命中 → 落到 Drop 位置（双轴 >0，AddLooseIcon 保留不重排）；否则 AddLooseIcon 按 _iconPositions/网格排。
+            if (dropPos.HasValue)
+            {
+                it.X = dropPos.Value.X;
+                it.Y = dropPos.Value.Y;
+            }
+            AddLooseIcon(it);
+        }
         SaveFencesDebounced(); // T7
     }
 
@@ -431,11 +469,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         }
     }
 
-    /// <summary>收集当前 _fences 状态为 AppConfig（纯 UI 线程逻辑，供防抖回调和 OnExit 共用）。</summary>
+    /// <summary>收集当前 _fences + 散落图标位置为 AppConfig（纯 UI 线程逻辑，供防抖回调和 OnExit 共用）。
+    /// 散落位置直接读 _looseIcons 现状（自由摆放拖动后 X/Y 已 INPC 更新），不依赖 _iconPositions 启动缓存。</summary>
     private AppConfig BuildAppConfigForSave()
     {
         var fences = _fences.Select(f => f.BuildConfig()).ToList();
-        return new AppConfig { Fences = fences };
+        var positions = _looseIcons.Select(i => new IconPosition(i.FilePath, i.X, i.Y)).ToList();
+        return new AppConfig { Fences = fences, IconPositions = positions };
     }
 
     /// <summary>立即保存（不等防抖）。OnExit 调用，确保退出时布局落盘。
@@ -515,10 +555,29 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         if (e.Data.GetDataPresent(DataFormats.Text))
         {
             var path = (string)e.Data.GetData(DataFormats.Text);
-            // 定位该 FilePath 的归属 Fence；从其移除（触发 IconRemoved → 异步重渲散落区，图标自动回填）。
-            // 若 path 不属于任何 Fence（散落图标拖到空白），无 owner，什么都不做。
+            // Drop 位置用 LooseItemsControl 坐标系（ItemsPanel Canvas 与 IconCanvas 1:1，见 XAML 注释）= IconItem.X/Y 同坐标系。
+            var pos = e.GetPosition(LooseItemsControl);
             var owner = _fences.FirstOrDefault(f => f.ContainsIcon(path));
-            owner?.RemoveIcon(path);
+            if (owner is not null)
+            {
+                // Fence 图标拖出空白：记 _dropPosition，RemoveIcon 触发 OnFenceIconRemoved 用它回填（落到 Drop 位置）。
+                _dropPosition = pos;
+                owner.RemoveIcon(path);
+            }
+            else
+            {
+                // 自由摆放：散落图标（owner null）拖到空白 = 改位置（像原生桌面自由摆放）。
+                // INPC setter 触发 → Canvas.Left/Top 绑定更新 → 图标移到 Drop 位置。SaveFencesDebounced 持久化新位置。
+                var loose = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
+                if (loose is not null)
+                {
+                    loose.X = pos.X;
+                    loose.Y = pos.Y;
+                    // 同步内存缓存（保持与 _looseIcons 一致）：消除"用户拖到 B 后文件删+还原同路径 → AddLooseIcon 用陈旧缓存 A"边界。
+                    _iconPositions[path] = (pos.X, pos.Y);
+                    SaveFencesDebounced();
+                }
+            }
             e.Handled = true;
             return;
         }
