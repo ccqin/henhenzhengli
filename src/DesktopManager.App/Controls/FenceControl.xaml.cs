@@ -1,7 +1,6 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using DesktopManager.App.Services;
@@ -394,25 +393,94 @@ public partial class FenceControl : UserControl
         if (Window.GetWindow(this) is IInteractiveHost host) host.EndInput();
     }
 
-    // ---------- M2 完善：resize（右下角 Thumb 拖改 W/H，DragCompleted 触发持久化） ----------
-    // 持久化闭环：resize → Width/Height 改 → ActualWidth/Height 跟着变 → DragCompleted 触发 ConfigChanged
-    // → 宿主 SaveFencesDebounced → BuildConfig 读 ActualWidth/Height 写回 W/H（已在 :88-89 就绪）。
-    // 不干扰 HeaderBar 拖动：Thumb 在 Border 内 Grid 同级，自带 CaptureMouse，事件不路由到 HeaderBar。
+    // ---------- 边缘 resize（替代右下角 Thumb） ----------
+    // 鼠标移到 Border 右边/下边/右下角边缘 → 对应 resize 光标（SizeWE/SizeNS/SizeNWSE）；
+    // 左键按下 → 记起点 + 初始 Width/Height + CaptureMouse；拖动 → 更新 W/H（最小值兜底，Math.Max）；
+    // 抬起 → ReleaseMouseCapture + 触发 ConfigChanged 持久化。
+    // 持久化闭环同旧 Thumb：resize → ActualWidth/Height 变 → Up 触发 ConfigChanged → 宿主 SaveFencesDebounced
+    // → BuildConfig 读 ActualWidth/Height 写回 W/H（已在 BuildConfig 就绪）。
+    //
+    // 不干扰其他交互（关键）：
+    // - HeaderBar 拖盒子：HeaderBar MouseLeftButtonDown 末尾 e.Handled=true → 不冒泡到 UserControl 根，
+    //   且 HeaderBar 在顶栏（非右/下边缘），边缘检测亦不会命中。
+    // - 内容图标拖出：BuildContentIcon 的 MouseLeftButtonDown 设 e.Handled=true → 不冒泡到根；
+    //   且图标在内容区中部，不在边缘 6px 内。
+    // - FoldButton：Button 自身处理鼠标事件并标记 handled，且位于顶栏（非边缘）。
+    // 折叠态禁用（缩到标题栏不需 resize）：_folded 时边缘光标检测 return（保持默认 Arrow）+ Down 直接 return。
 
+    private const double ResizeEdgeThreshold = 6;   // 距边缘 <6px 判为 resize 边
     private const double ResizeMinWidth = 120;
     private const double ResizeMinHeight = 80;
 
-    private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    private bool _isResizing;
+    private bool _resizeOnRight;        // 抓的是右边（横向 resize）
+    private bool _resizeOnBottom;       // 抓的是下边（纵向 resize）
+    private Point _resizeOrigin;        // 按下时鼠标相对本控件的位置
+    private double _resizeStartWidth;   // 按下时控件 Width
+    private double _resizeStartHeight;  // 按下时控件 Height（NaN→取 ActualHeight）
+
+    private void Fence_MouseMove(object sender, MouseEventArgs e)
     {
-        // DragDelta 频繁触发，只改尺寸不发 ConfigChanged（防抖兜底，但 DragCompleted 干净一次更好）。
-        // 最小值兜底 Math.Max(120, 80)，避免缩到看不见或破坏布局。
-        Width = Math.Max(ResizeMinWidth, Width + e.HorizontalChange);
-        Height = Math.Max(ResizeMinHeight, Height + e.VerticalChange);
+        var pos = e.GetPosition(this);
+
+        // resize 进行中：按起点 + 增量更新 W/H（仅更新被抓的轴，最小值兜底）。
+        if (_isResizing)
+        {
+            if (_resizeOnRight)
+                Width = Math.Max(ResizeMinWidth, _resizeStartWidth + (pos.X - _resizeOrigin.X));
+            if (_resizeOnBottom)
+                Height = Math.Max(ResizeMinHeight, _resizeStartHeight + (pos.Y - _resizeOrigin.Y));
+            return;
+        }
+
+        // 折叠态：禁用边缘 resize，光标保持默认（不设边缘光标）。
+        if (_folded) return;
+
+        // 非拖动：据鼠标距右/下边缘位置设 resize 光标。
+        var (onRight, onBottom) = HitResizeEdge(pos);
+        if (onRight && onBottom) Cursor = Cursors.SizeNWSE;
+        else if (onRight) Cursor = Cursors.SizeWE;
+        else if (onBottom) Cursor = Cursors.SizeNS;
+        else Cursor = Cursors.Arrow;
     }
 
-    private void ResizeThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+    private void Fence_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // 拖完一次触发持久化（vs DragDelta 每次触发 → 频繁 SaveFencesDebounced，虽防抖 500ms 兜底但更脏）。
+        // 折叠态不启动 resize（缩到标题栏，盒子高度已为 Auto，不提供 resize）。
+        if (_folded) return;
+
+        var pos = e.GetPosition(this);
+        var (onRight, onBottom) = HitResizeEdge(pos);
+        if (!onRight && !onBottom) return;   // 非边缘：留给 HeaderBar/内容图标/空白（不拦截）
+
+        _isResizing = true;
+        _resizeOnRight = onRight;
+        _resizeOnBottom = onBottom;
+        _resizeOrigin = pos;
+        _resizeStartWidth = Width;
+        _resizeStartHeight = double.IsNaN(Height) ? ActualHeight : Height;
+        CaptureMouse();   // 捕获 → 拖出控件外仍收 Move/Up，resize 体验连贯
+        e.Handled = true; // 标记 handled，避免同时触发 HeaderBar/拖盒子等
+    }
+
+    private void Fence_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isResizing) return;
+        _isResizing = false;
+        _resizeOnRight = _resizeOnBottom = false;
+        ReleaseMouseCapture();
+        e.Handled = true;
+        // resize 结束一次触发持久化（vs 拖动中每次触发 → 频繁 SaveFencesDebounced，虽防抖兜底但更脏）。
         ConfigChanged?.Invoke();
+    }
+
+    /// <summary>判断鼠标是否命中边缘 resize 区：距右 <阈值 或 距下 <阈值。
+    /// 用 ActualWidth/Height（渲染尺寸）作边缘基准，与可视边缘一致。</summary>
+    private (bool onRight, bool onBottom) HitResizeEdge(Point pos)
+    {
+        if (ActualWidth <= 0 || ActualHeight <= 0) return (false, false);
+        bool onRight = ActualWidth - pos.X < ResizeEdgeThreshold && pos.X >= 0;
+        bool onBottom = ActualHeight - pos.Y < ResizeEdgeThreshold && pos.Y >= 0;
+        return (onRight, onBottom);
     }
 }
