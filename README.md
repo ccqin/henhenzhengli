@@ -11,7 +11,8 @@ Windows 桌面图标管理 + 动态壁纸结合体工具。接管 explorer 桌�
 | M0 骨架 + 三件套 spike + 托盘常驻 | ✅ 完成 | `m0-skeleton` |
 | M1 桌面接管 + 图标镜像核心 | ✅ 完成（真机验收通过） | `m1-desktop-takeover` |
 | M2 收纳盒/分组 + 双击隐藏 | ✅ 完成（真机验收通过） | `m2-fences` |
-| M3 多屏 / M4 壁纸层 / M5 跨屏 / M6 商店化 | 📋 路线图 | — |
+| M3 多屏（图标层） | 🚧 计划中（双屏真机环境就绪） | — |
+| M4 壁纸层 / M5 跨屏 / M6 商店化 | 📋 路线图 | — |
 
 详见 `docs/superpowers/plans/`。
 
@@ -72,4 +73,6 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hi
 
 - 总计划与里程碑路线图：`docs/superpowers/plans/2026-07-21-desktop-manager.md`
 - M1 实现计划：`docs/superpowers/plans/2026-07-22-m1-desktop-takeover.md`
+- M2 实现计划：`docs/superpowers/plans/2026-07-22-m2-fences-hideicons.md`
+- M3 多屏实现计划：`docs/superpowers/plans/2026-08-04-m3-multi-monitor.md`
 - M0 spike 结论与验收：`docs/superpowers/notes/m0-spike-results.md`
