@@ -26,15 +26,18 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private long _noActivatePrevEx; // EnableActivation 返回值，EndInput 用其恢复
     private bool _inputActive;      // 防 BeginInput 重入（如多次进入编辑未退出）导致 prevEx 被覆盖
 
-    // ---------- T7：持久化 ----------
-    // 配置存储（App.OnStartup 注入）。Save 在 ThreadPool 线程做文件 IO；BuildConfig 在 UI 线程收集。
-    private readonly IConfigStore _store;
-    // 防抖定时器：变更后 500ms 无新触发才落盘。Change(dueTime, Infinite)：一次性触发，不重复。
-    private System.Threading.Timer? _saveTimer;
-    // 保护 Save 串行化（防抖回调与 SaveFencesNow 可能竞争同一文件写）。
-    private readonly object _saveLock = new();
-    private static readonly TimeSpan SaveDebounce = TimeSpan.FromMilliseconds(500);
-    private volatile bool _savingDisabled; // OnExit/Dispose 后不再后台写，避免退出竞态。
+    // ---------- M3-T3/T4：多屏化 ----------
+    // 窗口与显示器 1:1：构造接收显示器信息（定位用工作区 + 持久 ID）与本屏 Fence/位置子集（host 按归属切分）。
+    // 持久化上移 MultiMonitorHost：布局变更只发 LayoutChanged，host 聚合所有窗口 + 孤儿配置后防抖落盘。
+    private readonly string _monitorId;
+    private readonly (int X, int Y, int W, int H) _workArea;
+
+    /// <summary>本窗口归属屏持久 ID（BuildLayout 打戳 + host 分发路由用）。</summary>
+    public string MonitorId => _monitorId;
+    public bool IsPrimary { get; }
+
+    /// <summary>布局变更（Fence/散落图标增删拖/折叠/标题等）→ host 防抖聚合保存。</summary>
+    public event Action? LayoutChanged;
 
     // ---------- T3：归属划分 + 最小接线 ----------
     // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
@@ -81,20 +84,24 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         set => SetValue(IconVisibilityProperty, value);
     }
 
-    /// <param name="store">T7 注入的配置存储。null 仅用于设计器/极端场景（无持久化）。</param>
-    public IconLayerWindow(IConfigStore? store = null)
+    /// <param name="monitor">本窗口归属的显示器（工作区定位 + 持久 ID）。</param>
+    /// <param name="fences">本屏 Fence 子集（host 按 MonitorAssignment 切分；孤儿 Fence 不进任何窗口）。</param>
+    /// <param name="positions">本屏散落图标位置子集（启动排位缓存）。</param>
+    public IconLayerWindow(MonitorInfo monitor, IReadOnlyList<FenceConfig> fences, IReadOnlyList<IconPosition> positions)
     {
+        _monitorId = monitor.PersistentId;
+        IsPrimary = monitor.IsPrimary;
+        _workArea = (monitor.WorkX, monitor.WorkY, monitor.WorkWidth, monitor.WorkHeight);
+
         // P0-T2：DataTemplate 引用 {StaticResource FilePathToIconConverter}，须在 XAML 解析前注册。
         // 共享同一份 IconExtractor（与所有 FenceControl 共用图标缓存）。
         Resources["FilePathToIconConverter"] = new FilePathToIconConverter(_icons);
 
         InitializeComponent();
-        _store = store ?? new NullConfigStore();
         SourceInitialized += (_, _) =>
         {
-            // 铺主屏工作区（不含任务栏），避免遮挡任务栏。M3 多屏改按显示器工作区定位。
-            var work = SystemParameters.WorkArea;
-            Left = work.Left; Top = work.Top; Width = work.Width; Height = work.Height;
+            // M3：铺本屏工作区（不含任务栏）。单屏时代用 SystemParameters.WorkArea（仅主屏），多屏逐屏定位。
+            Left = _workArea.X; Top = _workArea.Y; Width = _workArea.W; Height = _workArea.H;
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
             // 真机修复（图标层浮在文件夹窗口上面）：SourceInitialized 时窗口尚未真正 Show，
@@ -119,31 +126,22 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 散落图标右键菜单（四项：打开/重命名/删除/打开文件位置）。Opening 前 PreviewMouseRightButtonDown hit-test 捕获 _contextMenuIcon。
         LooseItemsControl.ContextMenu = BuildLooseIconContextMenu();
 
-        // T7：启动防抖定时器（ThreadPool，一次性 due time）。
-        _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        // M3：本屏散落图标启动排位缓存（host 按归属切分注入）；后写赢（同 path 重复条目取最后一个）。
+        foreach (var p in positions) _iconPositions[p.FilePath] = (p.X, p.Y);
 
-        // T7：从 ConfigStore 加载 Fences（替换 T3 硬编码 f1）。
+        // M3：从 host 注入的本屏 Fence 子集加载（替换 T7 的 ConfigStore 直读）。
         // 加载阶段用 LoadIcons（不触发 IconAdded，避免 N*M 次宿主重渲），_fencedPaths 在此直接初始化。
-        LoadFencesFromConfig();
+        LoadFences(fences);
 
         // T6：画布空白右键 → 新建收纳盒。
         IconCanvas.ContextMenu = BuildCanvasContextMenu();
     }
 
-    /// <summary>T7 加载：读 config.Fences → 逐个 CreateFence + LoadIcons + _fencedPaths 初始化。
-    /// 容错：IconFilePaths 里已被用户删除的 path 用 IconPathFilter 跳过；空配置不创建任何 Fence。</summary>
-    private void LoadFencesFromConfig()
+    /// <summary>M3 加载：逐个 CreateFence + LoadIcons + _fencedPaths 初始化。
+    /// 容错：IconFilePaths 里已被用户删除的 path 用 IconPathFilter 跳过；单个坏 Fence 不中断其余。</summary>
+    private void LoadFences(IReadOnlyList<FenceConfig> fenceConfigs)
     {
-        AppConfig config;
-        try { config = _store.Load(); }
-        catch (Exception ex)
-        {
-            // ConfigStore.Load 内部已兜底返回默认；这里再兜一层防 IConfigStore 实现抛异常 → 不阻塞启动。
-            Log.Warning(ex, "LoadFencesFromConfig: Load 失败，空配置启动");
-            config = new AppConfig();
-        }
-
-        foreach (var fc in config.Fences)
+        foreach (var fc in fenceConfigs)
         {
             // I3：per-fence try/catch。单个坏 Fence（图标提取失败/Bind 异常/路径非法等）不中断其余加载，
             // 与 ConfigStore.Load 容错理念一致。坏 Fence 跳过，其余照常创建。
@@ -158,14 +156,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             catch (System.Exception ex)
             {
                 // 单个 Fence 加载失败属可恢复降级（其余 Fence 仍可加载），用 Warning 而非 Error。
-                Log.Warning(ex, "LoadFencesFromConfig：Fence {FenceId} 加载失败，跳过该 Fence（其余继续）", fc?.Id);
+                Log.Warning(ex, "LoadFences：Fence {FenceId} 加载失败，跳过该 Fence（其余继续）", fc?.Id);
                 continue;
             }
         }
 
-        // 自由摆放：加载散落图标持久化位置 → 填 _iconPositions 缓存（AddLooseIcon 优先用，重启保持位置）。
-        // 后写赢：同 path 重复条目（旧 config 数据问题）取列表最后一个，与"最新覆盖"语义一致。
-        foreach (var ip in config.IconPositions) _iconPositions[ip.FilePath] = (ip.X, ip.Y);
     }
 
     /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
@@ -224,7 +219,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             W = 180,
             H = 120
         });
-        SaveFencesDebounced(); // T7
+        RequestSave(); // T7
     }
 
     /// <summary>删除本 Fence：确认 → 从 _fences 移除 + 画布移除 + 取消订阅 + 释放归属（_fencedPaths 移除 + 单条回填散落区）。
@@ -257,7 +252,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             if (it is null && File.Exists(path)) it = new IconItem(path, Path.GetFileName(path));
             if (it is not null && !_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 网格排位，否则保留原位置；防重复
         }
-        SaveFencesDebounced(); // T7
+        RequestSave(); // T7
     }
 
     /// <summary>P0-T3：全量对账渲染（启动/explorer 重启/归属变化兜底用）。
@@ -316,7 +311,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             _fencedPaths.Remove(path);
             fenceChanged = true;
         }
-        if (fenceChanged) SaveFencesDebounced();
+        if (fenceChanged) RequestSave();
 
         // 4. 增量 mutate _looseIcons（UI 线程，R7）。
         //    倒序 RemoveAt：按 path 匹配删除，避免索引前移错位。
@@ -403,7 +398,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 本身在 UI 线程，无需 Dispatcher.BeginInvoke（R7）。FilePath 匹配（T3 单实例下引用也命中，FilePath 更稳）。
         var loose = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
         if (loose is not null) _looseIcons.Remove(loose);
-        SaveFencesDebounced(); // T7：归属变化持久化
+        RequestSave(); // T7：归属变化持久化
     }
 
     private void OnFenceIconRemoved(FenceControl fence, string filePath)
@@ -431,99 +426,36 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             }
             AddLooseIcon(it);
         }
-        SaveFencesDebounced(); // T7
+        RequestSave(); // T7
     }
 
     /// <summary>T7：FenceControl 标题/折叠/拖动坐标变化 → 防抖持久化。</summary>
     private void OnFenceConfigChanged()
     {
-        SaveFencesDebounced();
+        RequestSave();
     }
 
-    // ---------- T7：防抖持久化 ----------
+    // ---------- M3-T4：布局输出（持久化由 MultiMonitorHost 聚合） ----------
 
-    /// <summary>防抖触发：500ms 内无新变更才落盘。每次调用重置计时器。
-    /// 触发点：①归属变化（OnFenceIconAdded/Removed）；②新建/删除 Fence；③FenceControl.ConfigChanged。</summary>
-    private void SaveFencesDebounced()
-    {
-        if (_savingDisabled) return;
-        var t = _saveTimer;
-        if (t is null) return;
-        // Change(dueTime, period)：dueTime=500ms 后触发一次，period=Infinite 不重复。每次调用重置 dueTime → 防抖。
-        lock (_saveLock)
-        {
-            t.Change(SaveDebounce, Timeout.InfiniteTimeSpan);
-        }
-    }
+    /// <summary>布局变更通知：host 收到后防抖聚合所有窗口 + 孤儿配置落盘。
+    /// 触发点：①归属变化（OnFenceIconAdded/Removed）；②新建/删除 Fence；③FenceControl.ConfigChanged；④自由摆放 Drop。</summary>
+    private void RequestSave() => LayoutChanged?.Invoke();
 
-    /// <summary>Timer 回调（ThreadPool 线程）：收集 BuildConfig（须 UI 线程）→ Save（文件 IO，任意线程）。
-    /// 线程安全：BuildConfig 经 Dispatcher.Invoke 在 UI 线程读 Canvas 附加属性；Save 经 _saveLock 串行化。</summary>
-    private void OnSaveTimerElapsed()
-    {
-        if (_savingDisabled) return;
-        try
-        {
-            // Dispatcher.Invoke 同步回 UI 线程收集（BuildConfig 读 Canvas.GetLeft/Top + ActualWidth/Height）。
-            // 收集在 UI 线程做（快，无文件 IO）；结果带回 ThreadPool 线程做文件写。
-            AppConfig appConfig;
-            if (Dispatcher.CheckAccess())
-                appConfig = BuildAppConfigForSave();
-            else
-                appConfig = (AppConfig)Dispatcher.Invoke(new Func<AppConfig>(BuildAppConfigForSave));
-
-            lock (_saveLock)
-            {
-                if (_savingDisabled) return;
-                _store.Save(appConfig); // ConfigStore: 原子 tmp + File.Replace，线程安全
-            }
-        }
-        catch (Exception ex)
-        {
-            // 持久化失败不应崩 UI（同 ConfigStore 异常兜底理念）。下次变更会再触发重试。
-            Log.Warning(ex, "防抖保存失败");
-        }
-    }
-
-    /// <summary>收集当前 _fences + 散落图标位置为 AppConfig（纯 UI 线程逻辑，供防抖回调和 OnExit 共用）。
+    /// <summary>收集本屏布局（Fences + 散落位置），全部打上本屏 MonitorId 戳。UI 线程调用。
     /// 散落位置直接读 _looseIcons 现状（自由摆放拖动后 X/Y 已 INPC 更新），不依赖 _iconPositions 启动缓存。</summary>
-    private AppConfig BuildAppConfigForSave()
+    public (List<FenceConfig> Fences, List<IconPosition> Positions) BuildLayout()
     {
-        var fences = _fences.Select(f => f.BuildConfig()).ToList();
-        var positions = _looseIcons.Select(i => new IconPosition(i.FilePath, i.X, i.Y)).ToList();
-        return new AppConfig { Fences = fences, IconPositions = positions };
+        var fences = _fences.Select(f => f.BuildConfig() with { MonitorId = _monitorId }).ToList();
+        var positions = _looseIcons.Select(i => new IconPosition(i.FilePath, i.X, i.Y, _monitorId)).ToList();
+        return (fences, positions);
     }
 
-    /// <summary>立即保存（不等防抖）。OnExit 调用，确保退出时布局落盘。
-    /// 必须在 UI 线程调（OnExit 是 UI 线程）。先停掉待触发的防抖定时器，再同步收集 + Save。
-    /// 与待执行的防抖回调通过 _saveLock + _savingDisabled 串行/短路，避免退出竞态丢最后一次写。</summary>
-    public void SaveFencesNow()
-    {
-        // 停掉待触发的防抖定时器（已 in-flight 的回调由 _savingDisabled + lock 兜底）。
-        _savingDisabled = true;
-        try { _saveTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
-        catch { /* 释放中可能抛 ObjectDisposedException，忽略 */ }
+    /// <summary>path 是否归属本屏某 Fence（host 分发路由用）。</summary>
+    public bool ContainsFenced(string path) => _fencedPaths.Contains(path);
 
-        try
-        {
-            var appConfig = BuildAppConfigForSave(); // 已在 UI 线程
-            lock (_saveLock)
-            {
-                _store.Save(appConfig);
-            }
-        }
-        catch (Exception ex)
-        {
-            // 退出保存失败不阻塞 RestoreExplorer/ClearSelfCleanup（OnExit 兜底）。
-            Log.Error(ex, "退出保存失败");
-        }
-    }
-
-    /// <summary>设计器/极端场景（未注入 store）的 no-op 实现，避免 null 检查散落。</summary>
-    private sealed class NullConfigStore : IConfigStore
-    {
-        public AppConfig Load() => new AppConfig();
-        public void Save(AppConfig config) { /* no-op */ }
-    }
+    /// <summary>path 是否在本屏散落区（host 分发路由用）。</summary>
+    public bool ContainsLoose(string path)
+        => _looseIcons.Any(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
 
     // ---------- M2 真机修复 Bug 2：IInteractiveHost 实现 ----------
     // IconLayerWindow 全屏 NOACTIVATE：不抢 explorer 焦点（M1 设计）。但导致 app 内 TextBox 都打不出字。
@@ -590,7 +522,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                     loose.Y = pos.Y;
                     // 同步内存缓存（保持与 _looseIcons 一致）：消除"用户拖到 B 后文件删+还原同路径 → AddLooseIcon 用陈旧缓存 A"边界。
                     _iconPositions[path] = (pos.X, pos.Y);
-                    SaveFencesDebounced();
+                    RequestSave();
                 }
             }
             e.Handled = true;

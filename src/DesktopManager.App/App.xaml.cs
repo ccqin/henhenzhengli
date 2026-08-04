@@ -22,7 +22,7 @@ public partial class App : Application
 
     private TaskbarIcon? _tray;
     private RecoveryGuard? _recoveryGuard;
-    private IconLayerWindow? _iconLayer;
+    private MultiMonitorHost? _host;
     private DesktopSync? _sync;
     private ShellRestartWatcher? _shellWatcher;
 
@@ -101,7 +101,7 @@ public partial class App : Application
                 Log.Error(ex, "--restore-icons 恢复失败");
             }
             // ShutdownMode=OnExplicitShutdown（App.xaml）：显式 Shutdown 才退出。
-            // 此分支未创建任何 window/tray，OnExit 里 _iconLayer/_sync/_tray/_recoveryGuard 字段全 null，全 ?. no-op，安全。
+            // 此分支未创建任何 window/tray，OnExit 里 _host/_sync/_tray/_recoveryGuard 字段全 null，全 ?. no-op，安全。
             Shutdown();
             return;
         }
@@ -150,16 +150,16 @@ public partial class App : Application
         // 否则 explorer 原生图标隐藏但 app 没起来 → 桌面空（风险登记册 #1，I-1）。
         try
         {
-            // T7：创建 ConfigStore（原子写 + 异常兜底），注入 IconLayerWindow（加载 Fences + 防抖 Save）。
+            // M3-T3/T4：ConfigStore 收归 MultiMonitorHost（聚合所有窗口 + 孤儿配置防抖落盘）。
             var configStore = new ConfigStore(GetConfigPath());
-            // 2. 图标层窗口（不点击穿透，可点图标）
-            _iconLayer = new IconLayerWindow(configStore);
-            _iconLayer.Show();
-            var iconHwnd = new System.Windows.Interop.WindowInteropHelper(_iconLayer).Handle;
+            // 2. 每屏一个图标层窗口（按 MonitorAssignment 切分 Fence/位置，定位各自工作区）
+            _host = new MultiMonitorHost(configStore);
+            _host.Attach();
 
-            // 3. 桌面同步：初始 ApplySnapshot（全量对账）+ Changed 事件 Dispatcher 回 ApplyDiff（增量对账，拿回 DesktopDiff = 免费增量）
+            // 3. 桌面同步：仍是单一全局 watcher（桌面是单一逻辑空间，不按屏拆）；
+            //    初始全量按归属分发，Changed 增量经 host.Dispatch 路由到各窗口。
             var snapshot = DesktopSnapshot.ForDefaultDesktops();
-            _iconLayer.ApplySnapshot(snapshot.Capture());
+            _host.ApplyInitialSnapshot(snapshot.Capture());
             _sync = new DesktopSync(
                 snapshot,
                 new[] {
@@ -168,10 +168,9 @@ public partial class App : Application
                 },
                 TimeSpan.FromSeconds(3));
             // BeginInvoke 异步投递：防 UI 线程阻塞时与 OnExit 的 sync.Dispose() 理论死锁（I-5）。
-            // R7：_looseIcons mutate 全在 UI 线程。Changed 第二参是 DesktopDiff（P0-T3 拿回，原 (_,_) 丢弃）。
-            _sync.Changed += (_, diff) => Dispatcher.BeginInvoke(new Action(() => _iconLayer.ApplyDiff(diff)));
+            _sync.Changed += (_, diff) => Dispatcher.BeginInvoke(new Action(() => _host.Dispatch(diff)));
 
-            // 4. explorer 重启：TaskbarCreated → 重新接管（Attach 到 iconLayer hwnd）
+            // 4. explorer 重启：TaskbarCreated → 重新接管（Attach 到主屏窗口 hwnd）
             _shellWatcher = new ShellRestartWatcher();
             _shellWatcher.ExplorerRestarted += () => Dispatcher.BeginInvoke(new Action(() =>
             {
@@ -183,7 +182,7 @@ public partial class App : Application
                     try { _recoveryGuard.RestoreExplorer(); } catch { /* RestoreExplorer 也失败则不再升级 */ }
                 }
             }));
-            _shellWatcher.Attach(iconHwnd);
+            _shellWatcher.Attach(new System.Windows.Interop.WindowInteropHelper(_host.PrimaryWindow!).Handle);
         }
         catch
         {
@@ -201,13 +200,14 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // T7：立即保存布局（不等防抖），确保退出时 Fences 布局/归属/折叠态落盘。
+        // M3-T4：立即聚合保存所有窗口布局（不等防抖），确保退出时 Fences/归属/折叠态/散落位置落盘。
         // 放 _sync.Dispose / RestoreExplorer 之前：保存是 app 职责的核心数据，优先级最高。
-        // 保存失败不阻塞后续恢复流程（SaveFencesNow 内部 try/catch）。
-        try { _iconLayer?.SaveFencesNow(); }
-        catch (System.Exception ex) { Log.Error(ex, "OnExit SaveFencesNow 失败"); }
+        // 保存失败不阻塞后续恢复流程（SaveAllNow 内部 try/catch）。
+        try { _host?.SaveAllNow(); }
+        catch (System.Exception ex) { Log.Error(ex, "OnExit SaveAllNow 失败"); }
 
         _sync?.Dispose();
+        _host?.CloseAll(); // 关所有图标层窗口（恢复原生桌面前）
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。
         try
