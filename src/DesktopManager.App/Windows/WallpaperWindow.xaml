@@ -1,7 +1,10 @@
-<Window x:Class="DesktopManager.App.Windows.WallpaperWindow"
+﻿<Window x:Class="DesktopManager.App.Windows.WallpaperWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="WallpaperWindow" Height="450" Width="800"
-        WindowStyle="None" ResizeMode="NoResize"
-        ShowInTaskbar="False" Background="#222244">
+        Title="WallpaperWindow" WindowStyle="None" ResizeMode="NoResize"
+        ShowInTaskbar="False" ShowActivated="False" Background="Black">
+    <!-- M4：壁纸内容层。静态图/GIF 帧用此 Image；视频（T3）动态换 MediaElement。
+         本窗口刻意**不开 AllowsTransparency**：① MediaElement 在透明窗内不渲染（WPF 硬约束）；
+         ② 无壁纸时靠 Visibility=Hidden 让系统壁纸透出，不靠透明。 -->
+    <Image x:Name="WallpaperImage" Stretch="UniformToFill"/>
 </Window>

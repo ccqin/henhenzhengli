@@ -62,11 +62,26 @@ public static class WindowInterop
             throw new Win32Exception(Marshal.GetLastWin32Error());
     }
 
-    /// <summary>壁纸层：点击穿透（WS_EX_LAYERED|TRANSPARENT|NOACTIVATE）+ 置底。</summary>
-    public static void MakeClickThrough(IntPtr hWnd)
+    /// <summary>M4：把 <paramref name="hwnd"/> 精确插到 <paramref name="aboveHwnd"/> 正下方
+    /// （hWndInsertAfter=aboveHwnd → 它在本窗之上）。壁纸窗置底于本屏图标层用，不靠创建顺序赌 Z-order。</summary>
+    public static void PlaceBelow(IntPtr hwnd, IntPtr aboveHwnd)
+    {
+        if (!SetWindowPos(hwnd, aboveHwnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    /// <summary>点击穿透样式（不置底）：WS_EX_LAYERED|TRANSPARENT|NOACTIVATE。
+    /// 注：Win11 DWM 会对非透明 WPF 窗口抹掉 WS_EX_LAYERED（真机 ex 观察），无害——穿透靠 TRANSPARENT。</summary>
+    public static void ApplyClickThroughStyles(IntPtr hWnd)
     {
         long ex = GetExtendedStyle(hWnd);
         SetExtendedStyle(hWnd, ex | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+    }
+
+    /// <summary>壁纸层：点击穿透（WS_EX_LAYERED|TRANSPARENT|NOACTIVATE）+ 置底。</summary>
+    public static void MakeClickThrough(IntPtr hWnd)
+    {
+        ApplyClickThroughStyles(hWnd);
         SendToBottom(hWnd);
     }
 

@@ -17,6 +17,9 @@ public sealed class MultiMonitorHost
 {
     private readonly IConfigStore _store;
     private readonly Dictionary<string, IconLayerWindow> _windows = new(StringComparer.Ordinal);
+    // M4：每屏壁纸窗口（与图标层 1:1 伴生，Z-order 在其正下方）+ 壁纸配置（单一真相源，孤儿含在内）。
+    private readonly Dictionary<string, WallpaperWindow> _wallpaperWindows = new(StringComparer.Ordinal);
+    private readonly List<WallpaperConfig> _wallpapers = new();
 
     // 孤儿（归属屏离线）：不进任何窗口，保存时原样带回（防布局数据丢失）。
     private readonly List<FenceConfig> _orphanFences = new();
@@ -57,6 +60,7 @@ public sealed class MultiMonitorHost
             throw new InvalidOperationException("未枚举到任何显示器，无法创建图标层");
 
         var config = _store.Load();
+        _wallpapers.AddRange(config.Wallpapers); // M4：壁纸配置（离线屏的也保留 = 孤儿语义）
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -77,9 +81,17 @@ public sealed class MultiMonitorHost
             var win = new IconLayerWindow(m, myFences, myPositions);
             win.Host = this; // M3-T5：跨屏拖拽迁移协调
             win.LayoutChanged += RequestSave;
+            win.RequestBottom += () => BottomPair(m.PersistentId); // M4：Z-order 编排收归 host
             _windows[m.PersistentId] = win;
             win.Show();
             if (win.IsPrimary) PrimaryWindow ??= win;
+
+            // M4-T2：壁纸窗伴生（Z-order 由 BottomPair 统一编排）。
+            var wp = new WallpaperWindow(m);
+            _wallpaperWindows[m.PersistentId] = wp;
+            wp.Show();
+            ApplyWallpaperTo(m.PersistentId);
+            BottomPair(m.PersistentId);
         }
         PrimaryWindow ??= _windows.Values.First();
 
@@ -105,6 +117,39 @@ public sealed class MultiMonitorHost
         Log.Information("MultiMonitorHost：{Count} 个图标层窗口（{Monitors}），孤儿 Fence={OF} 位置={OP}",
             _windows.Count, string.Join(", ", monitors.Select(m => m.PersistentId)),
             _orphanFences.Count, _orphanPositions.Count);
+    }
+
+    /// <summary>M4：Z-order 编排——图标层置底，壁纸窗精确插到它正下方。
+    /// 所有置底时机（图标层 ContentRendered/Activated/SourceInitialized 经 RequestBottom）都走这里，
+    /// 杜绝两窗各自 SendToBottom 互踩。</summary>
+    private void BottomPair(string monitorId)
+    {
+        if (!_windows.TryGetValue(monitorId, out var win)) return;
+        try
+        {
+            var iconH = new System.Windows.Interop.WindowInteropHelper(win).Handle;
+            WindowInterop.SendToBottom(iconH);
+            if (_wallpaperWindows.TryGetValue(monitorId, out var wp))
+            {
+                var wpH = new System.Windows.Interop.WindowInteropHelper(wp).Handle;
+                WindowInterop.PlaceBelow(wpH, iconH);
+            }
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            Log.Warning(ex, "BottomPair 失败（{Mon}）", monitorId);
+        }
+    }
+
+    /// <summary>M4：把配置里的壁纸应用到指定屏窗口（无配置 → 窗口隐藏，系统壁纸透出）。</summary>
+    private void ApplyWallpaperTo(string monitorId)
+    {
+        if (!_wallpaperWindows.TryGetValue(monitorId, out var wp)) return;
+        var cfg = _wallpapers.FirstOrDefault(w =>
+            string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path}（共 {N} 条配置）",
+            monitorId, cfg is not null, cfg?.Path ?? "(null)", _wallpapers.Count);
+        wp.SetWallpaper(cfg);
     }
 
     /// <summary>M3-T6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换，DisplayChangeWatcher 防抖后调，UI 线程）。
@@ -142,6 +187,7 @@ public sealed class MultiMonitorHost
             w.LayoutChanged -= RequestSave;
             w.Close();
             _windows.Remove(goneId);
+            if (_wallpaperWindows.Remove(goneId, out var wpGone)) wpGone.Close();
             Log.Information("拓扑重建：显示器离线，关闭图标层窗口 {Id}", goneId);
         }
 
@@ -181,6 +227,7 @@ public sealed class MultiMonitorHost
         foreach (var m in monitors)
         {
             if (_windows.TryGetValue(m.PersistentId, out var win)) win.RepositionTo(m);
+            if (_wallpaperWindows.TryGetValue(m.PersistentId, out var wpAlive)) wpAlive.RepositionTo(m);
         }
 
         // 5. 新增屏：建窗 + 加载该屏布局（拔线插回 = 走这里原位恢复），并按归属补发桌面图标。
@@ -191,8 +238,15 @@ public sealed class MultiMonitorHost
             var win = new IconLayerWindow(m, myFencesByMon[m.PersistentId], myPositionsByMon[m.PersistentId]);
             win.Host = this;
             win.LayoutChanged += RequestSave;
+            win.RequestBottom += () => BottomPair(m.PersistentId);
             _windows[m.PersistentId] = win;
             win.Show();
+            // M4：新屏壁纸窗伴生（插回屏的壁纸按 config 原位恢复）。
+            var wp = new WallpaperWindow(m);
+            _wallpaperWindows[m.PersistentId] = wp;
+            wp.Show();
+            ApplyWallpaperTo(m.PersistentId);
+            BottomPair(m.PersistentId);
             newWindows.Add(win);
             Log.Information("拓扑重建：显示器上线，新建图标层窗口 {Id}", m.PersistentId);
         }
@@ -360,7 +414,8 @@ public sealed class MultiMonitorHost
             fences.AddRange(f);
             positions.AddRange(p);
         }
-        return new AppConfig { Fences = fences, IconPositions = positions };
+        // M4：壁纸配置整体带回（含离线屏孤儿——_wallpapers 从不过滤）。
+        return new AppConfig { Fences = fences, IconPositions = positions, Wallpapers = _wallpapers.ToList() };
     }
 
     /// <summary>立即聚合保存（不等防抖）。OnExit 调用；随后 CloseAll。</summary>
@@ -393,5 +448,7 @@ public sealed class MultiMonitorHost
             w.Close();
         }
         _windows.Clear();
+        foreach (var wp in _wallpaperWindows.Values) wp.Close();
+        _wallpaperWindows.Clear();
     }
 }

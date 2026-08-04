@@ -39,8 +39,19 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>布局变更（Fence/散落图标增删拖/折叠/标题等）→ host 防抖聚合保存。</summary>
     public event Action? LayoutChanged;
 
+    /// <summary>M4：本窗需要置底时通知 host（host 统一做「图标层置底 + 壁纸插其下」的 Z-order 编排，
+    /// 避免窗口各自 SendToBottom 与壁纸互踩）。无订阅者时自底（兼容 host 未接线场景）。</summary>
+    public event Action? RequestBottom;
+
     /// <summary>M3-T5：多屏宿主（host.Attach 后注入），跨屏拖拽迁移用。</summary>
     public MultiMonitorHost? Host { get; set; }
+
+    private void AskBottom()
+    {
+        if (RequestBottom is not null) { RequestBottom(); return; }
+        try { WindowInterop.SendToBottom(_hwnd); }
+        catch (System.ComponentModel.Win32Exception) { /* 窗口已无效则放弃 */ }
+    }
 
     /// <summary>M3-T6：分辨率/排列变化后重定位到新工作区（图标本地坐标不换算——工作区变小时超界项容忍，backlog）。</summary>
     public void RepositionTo(MonitorInfo monitor)
@@ -114,20 +125,16 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             Left = _workArea.X; Top = _workArea.Y; Width = _workArea.W; Height = _workArea.H;
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
+            AskBottom();
             // 真机修复（图标层浮在文件夹窗口上面）：SourceInitialized 时窗口尚未真正 Show，
             // WPF 随后把新窗口插入 Z-order 顶部，上面的 SendToBottom 被覆盖。
             // 双重保障：① ContentRendered（窗口已可见）后再置底一次；
             // ② Activated 守卫：非输入态被意外激活（Alt+Tab/其他路径）立即压回底部。
-            ContentRendered += (_, _) =>
-            {
-                try { WindowInterop.SendToBottom(_hwnd); }
-                catch (System.ComponentModel.Win32Exception) { /* 窗口已无效则放弃 */ }
-            };
+            ContentRendered += (_, _) => AskBottom();
             Activated += (_, _) =>
             {
                 if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底
-                try { WindowInterop.SendToBottom(_hwnd); }
-                catch (System.ComponentModel.Win32Exception) { /* 同上 */ }
+                AskBottom();
             };
         };
 
