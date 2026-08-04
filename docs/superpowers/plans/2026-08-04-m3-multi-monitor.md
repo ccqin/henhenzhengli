@@ -72,30 +72,32 @@ src/DesktopManager.Tests/
 
 ### M3-T1 — MonitorIdResolver：持久显示器 ID（Native spike）
 
-- [ ] `MonitorIdResolver.cs`：`QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS)` 枚举 DISPLAYCONFIG_PATH_INFO；对每条 path：
+> **落地偏差（真机已验收）**：GET_TARGET_NAME 在 Win11 24H2 + Intel MTL 上恒定 87（size/id/拓扑源扫描全排除），改用等价持久键 = GET_ADAPTER_NAME 的 PCI 硬件路径 + '#src' + source id（换排列顺序/重启稳定，验收通过）。
+
+- [x] `MonitorIdResolver.cs`：`QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS)` 枚举 DISPLAYCONFIG_PATH_INFO；对每条 path：
   - `DisplayConfigGetDeviceInfo(DISPLAYCONFIG_SOURCE_DEVICE_NAME)` → GDI 设备名（`\\.\DISPLAYn`，对应 `EnumDisplayMonitors` 的 szDevice）
   - `DisplayConfigGetDeviceInfo(DISPLAYCONFIG_TARGET_DEVICE_NAME)` → `monitorDevicePath`（如 `\\?\DISPLAY#GSM5B08#4&...#{e6f07b5f-...}`，含 EDID 硬件 ID，**这就是持久 ID**）
   - 输出 `IReadOnlyDictionary<string gdiName, string persistentId>`
-- [ ] 失败兜底：QueryDisplayConfig 不可用/异常（RDP 会话、极老驱动）→ 退化为 GDI 设备名（宁可串屏也不崩，日志 Warning）。
-- [ ] `MonitorEnumerator` 扩展：`MonitorInfo` 加 `PersistentId`、工作区（`rcWork`：X/Y/W/H，排除任务栏）、`IsPrimary`（`MONITORINFOF_PRIMARY`）；`Enumerate()` 内部调 MonitorIdResolver 填 PersistentId。
-- [ ] 验收（双屏真机，可挂临时调试输出或写日志）：
+- [x] 失败兜底：QueryDisplayConfig 不可用/异常（RDP 会话、极老驱动）→ 退化为 GDI 设备名（宁可串屏也不崩，日志 Warning）。
+- [x] `MonitorEnumerator` 扩展：`MonitorInfo` 加 `PersistentId`、工作区（`rcWork`：X/Y/W/H，排除任务栏）、`IsPrimary`（`MONITORINFOF_PRIMARY`）；`Enumerate()` 内部调 MonitorIdResolver 填 PersistentId。
+- [x] 验收（双屏真机，可挂临时调试输出或写日志）：
   1. 当前顺序下枚举：两个显示器各有稳定 PersistentId（含 `DISPLAY#厂商#序列` 字样）、工作区正确、恰好一个 IsPrimary
   2. 系统设置里**交换显示器排列顺序**（1↔2）→ 重跑：PersistentId 与显示器一一对应不变，设备名可能互换
   3. 拔一根 HDMI/DP 再插回 → 重跑：该屏 PersistentId 不变
-- [ ] commit。
+- [x] commit。
 
 ### M3-T2 — Core：config 加 MonitorId + MonitorAssignment（TDD）
 
-- [ ] `AppConfig.cs`：`FenceConfig` 与 `IconPosition` 各加 `string MonitorId { get; init; } = ""`（空串=主屏/未归属）。
-- [ ] 测试（先红）`AppConfigMonitorIdTests`：
+- [x] `AppConfig.cs`：`FenceConfig` 与 `IconPosition` 各加 `string MonitorId { get; init; } = ""`（空串=主屏/未归属）。
+- [x] 测试（先红）`AppConfigMonitorIdTests`：
   - 带 MonitorId 的 Fences/IconPositions Save→Load round-trip
   - **旧 JSON 兼容**：不含 MonitorId 字段的 JSON Load → MonitorId 为空串（System.Text.Json 缺字段走默认值，写测固化）
-- [ ] `MonitorAssignment.cs`（纯函数，输入：当前在线显示器集合 `IReadOnlyList<MonitorRef>`、config）：
+- [x] `MonitorAssignment.cs`（纯函数，输入：当前在线显示器集合 `IReadOnlyList<MonitorRef>`、config）：
   - `Resolve(string configMonitorId) → string?`：在线且匹配 → 该 ID；空串 → 主屏 ID；**不在线（拔掉）→ null（孤儿，不渲染）**
   - `FenceAssignments(config) → Dictionary<FenceId, string?>`、`LooseAssignments(iconPositions) → Dictionary<Path, string?>` 批量版
   - 无主屏的畸形拓扑（理论不发生）→ 全部孤儿，不抛
-- [ ] 测试（先红）`MonitorAssignmentTests`：匹配/缺省主屏/孤儿/无主屏/大小写一致（Ordinal）各 case。
-- [ ] TDD 红→绿→commit。
+- [x] 测试（先红）`MonitorAssignmentTests`：匹配/缺省主屏/孤儿/无主屏/大小写一致（Ordinal）各 case。
+- [x] TDD 红→绿→commit。
 
 ### M3-T3 — MultiMonitorHost + 每屏 IconLayerWindow（重构）
 
