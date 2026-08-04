@@ -42,6 +42,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>M3-T5：多屏宿主（host.Attach 后注入），跨屏拖拽迁移用。</summary>
     public MultiMonitorHost? Host { get; set; }
 
+    /// <summary>M3-T6：分辨率/排列变化后重定位到新工作区（图标本地坐标不换算——工作区变小时超界项容忍，backlog）。</summary>
+    public void RepositionTo(MonitorInfo monitor)
+    {
+        Left = monitor.WorkX; Top = monitor.WorkY;
+        Width = monitor.WorkWidth; Height = monitor.WorkHeight;
+    }
+
     // ---------- T3：归属划分 + 最小接线 ----------
     // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
     // P0-T2：FenceControl 是 IconCanvas 的持久子元素（CreateFence 一次 Add），ApplySnapshot/ApplyDiff 不 Clear Children、不重 Add Fence。

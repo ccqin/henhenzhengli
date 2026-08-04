@@ -25,6 +25,7 @@ public partial class App : Application
     private MultiMonitorHost? _host;
     private DesktopSync? _sync;
     private ShellRestartWatcher? _shellWatcher;
+    private DisplayChangeWatcher? _displayWatcher;
 
     /// <summary>T7 配置文件路径：%AppData%\DesktopManager\config.json（与 I-3 RunOnce 同属用户级状态目录）。</summary>
     private static string GetConfigPath()
@@ -183,6 +184,19 @@ public partial class App : Application
                 }
             }));
             _shellWatcher.Attach(new System.Windows.Interop.WindowInteropHelper(_host.PrimaryWindow!).Handle);
+
+            // 5. M3-T6：拓扑变化（热插拔/分辨率/DPI/主屏切换）→ 防抖后 host 重建窗口集。
+            _displayWatcher = new DisplayChangeWatcher();
+            _displayWatcher.DisplayChanged += () => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try { _host.RebuildToMatchTopology(); }
+                catch (System.Exception ex)
+                {
+                    // 重建失败保现状（窗口集不动），下一次拓扑事件再试；不升级到崩 app。
+                    Log.Error(ex, "RebuildToMatchTopology 失败（保现状）");
+                }
+            }));
+            _displayWatcher.Attach();
         }
         catch
         {
@@ -207,6 +221,7 @@ public partial class App : Application
         catch (System.Exception ex) { Log.Error(ex, "OnExit SaveAllNow 失败"); }
 
         _sync?.Dispose();
+        _displayWatcher?.Dispose();
         _host?.CloseAll(); // 关所有图标层窗口（恢复原生桌面前）
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。

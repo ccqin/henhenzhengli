@@ -24,6 +24,12 @@ public sealed class MultiMonitorHost
     // 孤儿屏上的全部图标 path（loose + Fence 内容）：初始分发/Added 路由跳过，防误落主屏。
     private readonly HashSet<string> _orphanPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    // 桌面最新全集（增量维护）：拓扑重建给新增窗口补图标用。
+    private readonly List<IconItem> _lastAll = new();
+    // path → 归属屏（config 位置记录解析出的在线归属）：启动/重建分发 hint——
+    // 窗口散落区未加载前 FindOwner 查不到，必须靠它把图标投到正确屏（否则全落主屏）。
+    private Dictionary<string, string> _looseAssignHint = new(StringComparer.OrdinalIgnoreCase);
+
     // 防抖保存（从单窗口时代的 IconLayerWindow 上移）：任一窗口 LayoutChanged → 500ms 后聚合落盘。
     private readonly System.Threading.Timer _saveTimer;
     private readonly object _saveLock = new();
@@ -77,6 +83,11 @@ public sealed class MultiMonitorHost
         }
         PrimaryWindow ??= _windows.Values.First();
 
+        // 分发 hint：config 位置记录解析出的在线归属（启动分发用，见 _looseAssignHint 注释）。
+        _looseAssignHint = looseAssign
+            .Where(kv => kv.Value is not null)
+            .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase);
+
         // 孤儿：归属屏离线的 Fence/位置。数据保留（保存时带回），path 记入 _orphanPaths 防误分发。
         foreach (var f in config.Fences)
         {
@@ -96,20 +107,137 @@ public sealed class MultiMonitorHost
             _orphanFences.Count, _orphanPositions.Count);
     }
 
-    /// <summary>启动全量分发：按归属把快照切给各窗口。
-    /// 归属判定：Fence 持有（构造期已 LoadIcons）→ 该窗；config 位置记录 → 该窗；都没有 → 主屏（新图标缺省）。</summary>
+    /// <summary>M3-T6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换，DisplayChangeWatcher 防抖后调，UI 线程）。
+    /// 流程：①现状落盘（防关窗丢布局）→ ②重枚举 → ③关消失屏的窗口（布局已在盘上，插回恢复）
+    /// → ④重算孤儿/归属 → ⑤存活屏重定位 → ⑥新增屏建窗加载布局 → ⑦刷新 PrimaryWindow。
+    /// 重建以「当前内存布局聚合快照」为新 config 基线（含孤儿），不重读盘（盘上可能是旧防抖值）。</summary>
+    public void RebuildToMatchTopology()
+    {
+        // 1. 现状落盘（含孤儿）：关窗前确保所有布局进盘 + 进快照。
+        AppConfig snapshot;
+        try
+        {
+            snapshot = BuildAggregatedConfig();
+            lock (_saveLock)
+            {
+                if (!_savingDisabled) _store.Save(snapshot);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "RebuildToMatchTopology：重建前保存失败，放弃重建（保现状）");
+            return;
+        }
+
+        var monitors = MonitorEnumerator.Enumerate();
+        if (monitors.Count == 0) return; // 枚举异常/全灭：不动现有窗口，等下一次事件
+
+        var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
+        var liveIds = new HashSet<string>(monitors.Select(m => m.PersistentId), StringComparer.Ordinal);
+
+        // 2. 关消失屏的窗口（其布局已含在 snapshot → 插回时按持久 ID 恢复）。
+        foreach (var goneId in _windows.Keys.Where(k => !liveIds.Contains(k)).ToList())
+        {
+            var w = _windows[goneId];
+            w.LayoutChanged -= RequestSave;
+            w.Close();
+            _windows.Remove(goneId);
+            Log.Information("拓扑重建：显示器离线，关闭图标层窗口 {Id}", goneId);
+        }
+
+        // 3. 以 snapshot 为新基线重算孤儿 + 每屏归属（孤儿集合整体重置）。
+        _orphanFences.Clear(); _orphanPositions.Clear(); _orphanPaths.Clear();
+        var fenceAssign = MonitorAssignment.FenceAssignments(snapshot.Fences, online);
+        var looseAssign = MonitorAssignment.LooseAssignments(snapshot.IconPositions, online);
+        foreach (var f in snapshot.Fences)
+        {
+            if (fenceAssign[f.Id] is not null) continue;
+            _orphanFences.Add(f);
+            foreach (var p in f.IconFilePaths) _orphanPaths.Add(p);
+        }
+        foreach (var p in snapshot.IconPositions)
+        {
+            if (looseAssign[p.FilePath] is not null) continue;
+            _orphanPositions.Add(p);
+            _orphanPaths.Add(p.FilePath);
+        }
+        _looseAssignHint = looseAssign
+            .Where(kv => kv.Value is not null)
+            .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase);
+        var myFencesByMon = monitors.ToDictionary(m => m.PersistentId, _ => new List<FenceConfig>());
+        var myPositionsByMon = monitors.ToDictionary(m => m.PersistentId, _ => new List<IconPosition>());
+        foreach (var f in snapshot.Fences)
+        {
+            var a = fenceAssign[f.Id];
+            if (a is not null) myFencesByMon[a].Add(f);
+        }
+        foreach (var p in snapshot.IconPositions)
+        {
+            var a = looseAssign[p.FilePath];
+            if (a is not null) myPositionsByMon[a].Add(p);
+        }
+
+        // 4. 存活屏：仅重定位（本地坐标不换算）。
+        foreach (var m in monitors)
+        {
+            if (_windows.TryGetValue(m.PersistentId, out var win)) win.RepositionTo(m);
+        }
+
+        // 5. 新增屏：建窗 + 加载该屏布局（拔线插回 = 走这里原位恢复），并按归属补发桌面图标。
+        var newWindows = new List<IconLayerWindow>();
+        foreach (var m in monitors)
+        {
+            if (_windows.ContainsKey(m.PersistentId)) continue;
+            var win = new IconLayerWindow(m, myFencesByMon[m.PersistentId], myPositionsByMon[m.PersistentId]);
+            win.Host = this;
+            win.LayoutChanged += RequestSave;
+            _windows[m.PersistentId] = win;
+            win.Show();
+            newWindows.Add(win);
+            Log.Information("拓扑重建：显示器上线，新建图标层窗口 {Id}", m.PersistentId);
+        }
+        if (newWindows.Count > 0 && _lastAll.Count > 0)
+        {
+            // Distribute 只投 target 窗口；存量图标在旧窗已有，FindOwner 命中旧窗 → 不会重复投。
+            Distribute(_lastAll, newWindows);
+        }
+
+        // 6. 主屏可能切换：PrimaryWindow 指向当前主屏窗口（存量 _allItems/IsPrimary 不搬，backlog）。
+        var primaryId = monitors.FirstOrDefault(m => m.IsPrimary)?.PersistentId;
+        if (primaryId is not null && _windows.TryGetValue(primaryId, out var pw)) PrimaryWindow = pw;
+        else PrimaryWindow = _windows.Values.FirstOrDefault();
+
+        // 7. 布局已随 snapshot 落盘；重建本身不触发 RequestSave（无布局语义变化）。
+        Log.Information("拓扑重建完成：{Count} 个窗口，孤儿 Fence={OF} 位置={OP}",
+            _windows.Count, _orphanFences.Count, _orphanPositions.Count);
+    }
+
+    /// <summary>启动全量分发：按归属把快照切给各窗口（并记 _lastAll 供重建补发）。</summary>
     public void ApplyInitialSnapshot(IReadOnlyList<IconItem> all)
     {
-        var groups = _windows.Keys.ToDictionary(k => k, _ => new List<IconItem>());
+        _lastAll.Clear();
+        _lastAll.AddRange(all);
+        Distribute(all, _windows.Values);
+    }
+
+    /// <summary>按归属分发到目标窗口：Fence/散落持有（FindOwner）→ 该窗；config 位置 hint → 该窗；
+    /// 都没有 → 主屏（新图标缺省）。孤儿 path 跳过（不渲染，插回恢复）。</summary>
+    private void Distribute(IReadOnlyList<IconItem> all, IEnumerable<IconLayerWindow> targets)
+    {
+        var groups = targets.ToDictionary(w => w, _ => new List<IconItem>());
         foreach (var item in all)
         {
-            if (_orphanPaths.Contains(item.FilePath)) continue; // 孤儿屏图标：不渲染，插回恢复
+            if (_orphanPaths.Contains(item.FilePath)) continue;
             var owner = FindOwner(item.FilePath);
-            var target = owner?.MonitorId ?? PrimaryWindow!.MonitorId;
-            groups[target].Add(item);
+            IconLayerWindow target;
+            if (owner is not null) target = owner;
+            else if (_looseAssignHint.TryGetValue(item.FilePath, out var mon) && _windows.TryGetValue(mon, out var hw))
+                target = hw;
+            else target = PrimaryWindow!;
+            if (groups.TryGetValue(target, out var list)) list.Add(item);
         }
-        foreach (var (mon, win) in _windows)
-            win.ApplySnapshot(groups[mon]);
+        foreach (var (win, items) in groups)
+            win.ApplySnapshot(items);
     }
 
     /// <summary>增量分发（sync.Changed）。
@@ -117,6 +245,15 @@ public sealed class MultiMonitorHost
     /// Added 按归属投单窗：Fence/散落持有窗，无归属落主屏。</summary>
     public void Dispatch(DesktopDiff diff)
     {
+        // 维护桌面全集快照（拓扑重建补发用）：倒序按 path 删，再追加 Added。
+        if (diff.Removed.Count > 0)
+        {
+            var removedPaths = new HashSet<string>(diff.Removed.Select(r => r.FilePath), StringComparer.OrdinalIgnoreCase);
+            for (int i = _lastAll.Count - 1; i >= 0; i--)
+                if (removedPaths.Contains(_lastAll[i].FilePath)) _lastAll.RemoveAt(i);
+        }
+        _lastAll.AddRange(diff.Added);
+
         if (diff.Removed.Count > 0)
         {
             var removedOnly = new DesktopDiff(Array.Empty<IconItem>(), diff.Removed);
