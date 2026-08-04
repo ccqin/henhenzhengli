@@ -6,6 +6,7 @@ using System.Windows.Media;
 using DesktopManager.App.Services;
 using DesktopManager.Core.Models;
 
+using DesktopManager.App.Windows;
 namespace DesktopManager.App.Controls;
 
 /// <summary>
@@ -285,6 +286,20 @@ public partial class FenceControl : UserControl
         if (!_isDragging || Parent is not Canvas canvas)
         {
             return;
+        }
+        // M3-T5：拖出本窗口边界 → 转 OLE 跨屏拖拽（目标屏 IconCanvas 接收）。
+        // CaptureMouse 模式下先释放捕获再进 DoDragDrop 模态循环；拖拽结果由目标窗 Drop 处理。
+        var win = Window.GetWindow(this) as IconLayerWindow;
+        if (win is not null)
+        {
+            var winPos = e.GetPosition(win);
+            if (winPos.X < 0 || winPos.Y < 0 || winPos.X > win.ActualWidth || winPos.Y > win.ActualHeight)
+            {
+                _isDragging = false;
+                HeaderBar.ReleaseMouseCapture();
+                win.BeginFenceCrossScreenDrag(this);
+                return;
+            }
         }
         var pos = e.GetPosition(canvas);
         Canvas.SetLeft(this, _startLeft + (pos.X - _dragOrigin.X));

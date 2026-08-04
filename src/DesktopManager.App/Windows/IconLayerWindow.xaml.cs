@@ -39,6 +39,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>布局变更（Fence/散落图标增删拖/折叠/标题等）→ host 防抖聚合保存。</summary>
     public event Action? LayoutChanged;
 
+    /// <summary>M3-T5：多屏宿主（host.Attach 后注入），跨屏拖拽迁移用。</summary>
+    public MultiMonitorHost? Host { get; set; }
+
     // ---------- T3：归属划分 + 最小接线 ----------
     // 当前所有 FenceControl 实例（T7 启动从 ConfigStore 加载，运行期 CreateNewFence/DeleteFence 维护）。
     // P0-T2：FenceControl 是 IconCanvas 的持久子元素（CreateFence 一次 Add），ApplySnapshot/ApplyDiff 不 Clear Children、不重 Add Fence。
@@ -457,6 +460,93 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     public bool ContainsLoose(string path)
         => _looseIcons.Any(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
 
+    // ---------- M3-T5：跨屏拖拽迁移 API（host 协调，源窗导出 + 目标窗导入） ----------
+
+    /// <summary>Fence 本体被拖出本窗口边界 → 转 OLE 跨屏拖拽（FenceControl.HeaderBar_MouseMove 触发）。
+    /// payload 仅 Text（"fence:&lt;id&gt;"）：explorer/文件夹不认 → 拖到窗口外无副作用；目标窗 IconCanvas_Drop 解析后走 host.TransferFence。</summary>
+    public void BeginFenceCrossScreenDrag(FenceControl fence)
+    {
+        var data = new DataObject();
+        data.SetData(DataFormats.Text, "fence:" + fence.BuildConfig().Id);
+        DragDrop.DoDragDrop(fence, data, DragDropEffects.Move);
+        // Drop 处理在目标窗口（或本窗同屏移动分支）；拖回/拖到无效处则现状即最终态，兜底存一次。
+        RequestSave();
+    }
+
+    /// <summary>本窗是否含指定 Id 的 Fence（host 路由用）。</summary>
+    public bool ContainsFence(string fenceId) => _fences.Any(f => f.BuildConfig().Id == fenceId);
+
+    /// <summary>导出图标供跨屏迁移：fenced → 静默清归属（不回填散落区）；loose → 从散落区移除。
+    /// 返回 IconItem（文件已删则 null）；同时从 _allItems 移除（源窗不留回填源）。</summary>
+    public IconItem? ExportIcon(string path)
+    {
+        if (_fencedPaths.Contains(path))
+        {
+            foreach (var f in _fences.Where(f => f.ContainsIcon(path))) f.RemoveIconSilent(path);
+            _fencedPaths.Remove(path);
+        }
+        else
+        {
+            var loose = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
+            if (loose is null) return null; // 本窗根本不持有（防御）
+            _looseIcons.Remove(loose);
+        }
+        var item = _allItems.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
+        if (item is null && File.Exists(path)) item = new IconItem(path, Path.GetFileName(path));
+        if (item is null) return null;
+        _allItems = _allItems.Where(i => !string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase)).ToList();
+        RequestSave();
+        return item;
+    }
+
+    /// <summary>接收另一屏迁来的图标 → 落散落区 Drop 位置（本地坐标直接可用）。</summary>
+    public void ImportLoose(IconItem item, Point pos)
+    {
+        item.X = pos.X;
+        item.Y = pos.Y;
+        _iconPositions[item.FilePath] = (pos.X, pos.Y);
+        if (!_looseIcons.Contains(item)) _looseIcons.Add(item);
+        if (!_allItems.Any(i => string.Equals(i.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase)))
+            _allItems = _allItems.Append(item).ToList();
+        RequestSave();
+    }
+
+    /// <summary>静默移除 Fence（无确认框、图标不回填散落区——随 Fence 迁走），返回其 config 供目标窗重建。</summary>
+    public FenceConfig? ExportFence(string fenceId)
+    {
+        var fence = _fences.FirstOrDefault(f => f.BuildConfig().Id == fenceId);
+        if (fence is null) return null;
+        var cfg = fence.BuildConfig();
+        _fences.Remove(fence);
+        IconCanvas.Children.Remove(fence);
+        fence.IconAdded -= OnFenceIconAdded;
+        fence.IconRemoved -= OnFenceIconRemoved;
+        fence.ConfigChanged -= OnFenceConfigChanged;
+        foreach (var p in cfg.IconFilePaths) _fencedPaths.Remove(p);
+        RequestSave();
+        return cfg;
+    }
+
+    /// <summary>接收另一屏迁来的 Fence：重建控件 + 恢复归属图标（X/Y 已由 host 设为 Drop 位置）。</summary>
+    public void ImportFence(FenceConfig cfg)
+    {
+        var fence = CreateFence(cfg with { MonitorId = _monitorId });
+        var existing = IconPathFilter.FilterExisting(cfg.IconFilePaths);
+        fence.LoadIcons(existing);
+        foreach (var p in existing) _fencedPaths.Add(p);
+        RequestSave();
+    }
+
+    /// <summary>同窗 Fence 拖动换位置（TransferFence 同屏分支）。</summary>
+    public void MoveFence(string fenceId, Point pos)
+    {
+        var fence = _fences.FirstOrDefault(f => f.BuildConfig().Id == fenceId);
+        if (fence is null) return;
+        Canvas.SetLeft(fence, pos.X);
+        Canvas.SetTop(fence, pos.Y);
+        RequestSave();
+    }
+
     // ---------- M2 真机修复 Bug 2：IInteractiveHost 实现 ----------
     // IconLayerWindow 全屏 NOACTIVATE：不抢 explorer 焦点（M1 设计）。但导致 app 内 TextBox 都打不出字。
     // BeginInput 临时去 NOACTIVATE + 前台化；EndInput 恢复 NOACTIVATE + SendToBottom 回桌面层。
@@ -504,6 +594,15 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             var path = (string)e.Data.GetData(DataFormats.Text);
             // Drop 位置用 LooseItemsControl 坐标系（ItemsPanel Canvas 与 IconCanvas 1:1，见 XAML 注释）= IconItem.X/Y 同坐标系。
             var pos = e.GetPosition(LooseItemsControl);
+
+            // M3-T5：Fence 本体跨屏拖拽（payload "fence:<id>"，见 BeginFenceCrossScreenDrag）。
+            if (path.StartsWith("fence:", StringComparison.Ordinal))
+            {
+                Host?.TransferFence(path["fence:".Length..], this, pos);
+                e.Handled = true;
+                return;
+            }
+
             var owner = _fences.FirstOrDefault(f => f.ContainsIcon(path));
             if (owner is not null)
             {
@@ -523,6 +622,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                     // 同步内存缓存（保持与 _looseIcons 一致）：消除"用户拖到 B 后文件删+还原同路径 → AddLooseIcon 用陈旧缓存 A"边界。
                     _iconPositions[path] = (pos.X, pos.Y);
                     RequestSave();
+                }
+                else
+                {
+                    // M3-T5：跨屏图标拖拽——path 属另一窗口的 Fence/散落区（本窗查无）→ 经 host 迁移到本屏散落区。
+                    Host?.TransferLoose(path, this, pos);
                 }
             }
             e.Handled = true;

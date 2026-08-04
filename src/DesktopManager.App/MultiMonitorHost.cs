@@ -69,6 +69,7 @@ public sealed class MultiMonitorHost
             }
 
             var win = new IconLayerWindow(m, myFences, myPositions);
+            win.Host = this; // M3-T5：跨屏拖拽迁移协调
             win.LayoutChanged += RequestSave;
             _windows[m.PersistentId] = win;
             win.Show();
@@ -134,6 +135,37 @@ public sealed class MultiMonitorHost
         }
         foreach (var (w, items) in groups)
             w.ApplyDiff(new DesktopDiff(items, Array.Empty<IconItem>()));
+    }
+
+    // ---------- M3-T5：跨屏拖拽迁移 ----------
+
+    /// <summary>图标跨屏迁移：path 属 source 窗口（Fence 或散落），拖落在 target 空白 → 迁到 target 散落区 Drop 位置。
+    /// source==target 或无归属时 no-op（同窗场景由窗口内部 Drop 分支处理）。</summary>
+    public void TransferLoose(string path, IconLayerWindow target, System.Windows.Point pos)
+    {
+        var source = FindOwner(path);
+        if (source is null || source == target) return;
+        var item = source.ExportIcon(path);
+        if (item is null) return; // 文件已删等：不迁幽灵图标
+        target.ImportLoose(item, pos);
+        Log.Information("跨屏迁移图标：{Path} → {Monitor}", path, target.MonitorId);
+    }
+
+    /// <summary>Fence 跨屏迁移：source 静默移除 → target 重建（归属图标随迁，X/Y=Drop 位置）。
+    /// 同窗拖放 = 仅换位置（MoveFence）。</summary>
+    public void TransferFence(string fenceId, IconLayerWindow target, System.Windows.Point pos)
+    {
+        var source = _windows.Values.FirstOrDefault(w => w.ContainsFence(fenceId));
+        if (source is null) return;
+        if (source == target)
+        {
+            target.MoveFence(fenceId, pos);
+            return;
+        }
+        var cfg = source.ExportFence(fenceId);
+        if (cfg is null) return;
+        target.ImportFence(cfg with { X = pos.X, Y = pos.Y });
+        Log.Information("跨屏迁移 Fence：{Id}（{Title}）→ {Monitor}", fenceId, cfg.Title, target.MonitorId);
     }
 
     /// <summary>运行时归属查询：哪个窗口持有该 path（Fence 归属或散落区）。</summary>
