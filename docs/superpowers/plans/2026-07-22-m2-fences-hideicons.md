@@ -55,7 +55,7 @@ src/DesktopManager.Tests/
 
 **Files:** Create `Core/Models/FenceConfig.cs`、`Tests/FenceConfigTests.cs`
 
-- [ ] FenceConfig：
+- [x] FenceConfig：
 ```csharp
 namespace DesktopManager.Core.Models;
 public record FenceConfig(
@@ -80,74 +80,74 @@ public record FenceConfig
     public IReadOnlyList<string> IconFilePaths { get; init; } = Array.Empty<string>();
 }
 ```
-- [ ] 测试：`Save` 一个含 Fence 的 AppConfig → `Load` → Fences 列表 round-trip（Title/X/Y/IconFilePaths 一致）；空 Fences 默认。ConfigStore 已支持（AppConfig.Fences 序列化），测试主要验证 FenceConfig 本身可序列化 + 默认值。
-- [ ] TDD 红→绿→commit。
+- [x] 测试：`Save` 一个含 Fence 的 AppConfig → `Load` → Fences 列表 round-trip（Title/X/Y/IconFilePaths 一致）；空 Fences 默认。ConfigStore 已支持（AppConfig.Fences 序列化），测试主要验证 FenceConfig 本身可序列化 + 默认值。
+- [x] TDD 红→绿→commit。
 
 ### M2-T2 — FenceControl 控件（UI spike）
 
 **Files:** Create `App/Controls/FenceControl.xaml(.cs)`
 
-- [ ] XAML：`UserControl`，根 `Border`（CornerRadius=6, Background=#80000000 半透明黑, BorderBrush=#40FFFFFF）。顶栏 `Grid`（标题 TextBlock + 折叠按钮 ▾）。内容区 `ItemsControl` 或 `WrapPanel` 放归属图标（折叠时 Collapsed）。
-- [ ] code-behind：
+- [x] XAML：`UserControl`，根 `Border`（CornerRadius=6, Background=#80000000 半透明黑, BorderBrush=#40FFFFFF）。顶栏 `Grid`（标题 TextBlock + 折叠按钮 ▾）。内容区 `ItemsControl` 或 `WrapPanel` 放归属图标（折叠时 Collapsed）。
+- [x] code-behind：
   - `Bind(FenceConfig)` 把 Title/坐标/折叠态绑上。
   - 顶栏 `MouseLeftButtonDown` → `DragMove()`（整体拖动）。
   - 折叠按钮 → 切内容区 Visibility + 更新 Folded。
   - 标题双击 → 进入编辑（TextBox）→ 回车确认改 Title。
-- [ ] 验收（真机）：盒子半透明显示、可整体拖、点折叠收起/展开、标题可改。
-- [ ] commit。
+- [x] 验收（真机）：盒子半透明显示、可整体拖、点折叠收起/展开、标题可改。
+- [x] commit。
 
 ### M2-T3 — 图标拖入/拖出收纳盒（UI spike）
 
 **Files:** Modify `IconLayerWindow.xaml.cs`、`FenceControl.xaml.cs`
 
-- [ ] 图标项（Image+TextBlock 的 StackPanel）设 `AllowDrop`/`MouseMove`+`DoDragDrop`（拖出），数据 = IconItem.FilePath。
-- [ ] FenceControl 内容区 `AllowDrop` + `Drop`：拖入则把 FilePath 加入该 Fence.IconFilePaths、从散落区移除；持久化。
-- [ ] 从 Fence 拖出到画布空白：反向操作。
-- [ ] 验收（真机）：图标在桌面↔盒子间拖动，重启 app 后归属保持（持久化生效）。
-- [ ] commit。
+- [x] 图标项（Image+TextBlock 的 StackPanel）设 `AllowDrop`/`MouseMove`+`DoDragDrop`（拖出），数据 = IconItem.FilePath。
+- [x] FenceControl 内容区 `AllowDrop` + `Drop`：拖入则把 FilePath 加入该 Fence.IconFilePaths、从散落区移除；持久化。
+- [x] 从 Fence 拖出到画布空白：反向操作。
+- [x] 验收（真机）：图标在桌面↔盒子间拖动，重启 app 后归属保持（持久化生效）。
+- [x] commit。
 
 ### M2-T4 — 双击空白隐藏/显示全部图标（UI）
 
 **Files:** Modify `IconLayerWindow.xaml.cs`
 
-- [ ] Canvas（或根 Grid）`MouseLeftButtonDown`：若 `ClickCount>=2` 且 hit-test 命中的是画布本身（非图标/盒子）→ 切换一个 `_iconsVisible` bool，把散落图标和 FenceControl 的 Visibility 在 Visible/Collapsed 间切。
-- [ ] 验收（真机）：双击空白 → 所有图标+盒子隐藏（看壁纸）；再双击 → 恢复。
-- [ ] commit。
+- [x] Canvas（或根 Grid）`MouseLeftButtonDown`：若 `ClickCount>=2` 且 hit-test 命中的是画布本身（非图标/盒子）→ 切换一个 `_iconsVisible` bool，把散落图标和 FenceControl 的 Visibility 在 Visible/Collapsed 间切。
+- [x] 验收（真机）：双击空白 → 所有图标+盒子隐藏（看壁纸）；再双击 → 恢复。
+- [x] commit。
 
 ### M2-T5 — 图标右键菜单（UI）
 
 **Files:** Modify `IconLayerWindow.xaml.cs`（或 IconItemControl 抽出）
 
-- [ ] 图标项加 `ContextMenu`：打开 / 重命名 / 删除 / 打开文件位置。
+- [x] 图标项加 `ContextMenu`：打开 / 重命名 / 删除 / 打开文件位置。
   - 打开 = `Process.Start(UseShellExecute)`（M1 已有 Open）。
   - 重命名 = 弹 InputBox（或内联 TextBox）→ `File.Move` 改 Desktop 文件名 → DesktopSync 自动同步。
   - 删除 = 确认 → `File.Delete`（或移到回收站，用 `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile` recycle）→ Sync 同步。
   - 打开文件位置 = `explorer.exe /select,"path"`。
-- [ ] 验收（真机）：四项可用且文件系统同步。
-- [ ] commit。
+- [x] 验收（真机）：四项可用且文件系统同步。
+- [x] commit。
 
 ### M2-T6 — I-3 自清理（RunOnce 钩子）+ 收纳盒右键
 
 **Files:** Modify `App/RecoveryGuard.cs`（或新 `Native/RunOnceSelfCleanup.cs`）
 
-- [ ] **I-3 自清理**：
+- [x] **I-3 自清理**：
   - app 启动时（TakeOver 之后）写 RunOnce：`HKCU\...\RunOnce\DM_RestoreIcons` = `"reg.exe add ...Advanced /v HideIcons /t REG_DWORD /d 0 /f"`（或指向一个恢复 helper）。
   - 含义：下次用户登录时，若 app 没启动，Windows 自动跑这条恢复 HideIcons=0（桌面图标回来）。
   - app 正常启动并接管后，**清除**该 RunOnce 值（避免每次登录都恢复）。
   - 这样：app 正常运行→无钩子；app 崩溃且不再启动→下次登录 RunOnce 恢复桌面。
-- [ ] 收纳盒右键：新建空 Fence / 删除 Fence / 重命名 Fence（操作 AppConfig.Fences + 持久化 + UI 刷新）。
-- [ ] 验收（真机）：写 RunOnce 后用 `reg query` 确认；模拟 app 不启动（注销/重启）→ 桌面图标恢复。
-- [ ] commit。
+- [x] 收纳盒右键：新建空 Fence / 删除 Fence / 重命名 Fence（操作 AppConfig.Fences + 持久化 + UI 刷新）。
+- [x] 验收（真机）：写 RunOnce 后用 `reg query` 确认；模拟 app 不启动（注销/重启）→ 桌面图标恢复。
+- [x] commit。
 
 ### M2-T7 — 接线 + 冒烟 + tag
 
 **Files:** Modify `App/Windows/IconLayerWindow.xaml.cs`、`App/App.xaml.cs`
 
-- [ ] IconLayerWindow：启动时从 ConfigStore 加载 Fences → 创建 FenceControl 放画布 → 散落图标（不在任何 Fence 的 IconFilePaths 里的）正常显示。
-- [ ] Fence/图标变更（拖拽/重命名/删除/新建）→ 更新 AppConfig.Fences → ConfigStore.Save（防抖，避免频繁写）。
-- [ ] OnExit：保存当前布局 + 清 RunOnce（正常退出）+ RestoreExplorer。
-- [ ] build + test 全绿 → `git tag m2-fences`。
-- [ ] 真机冒烟：接管→图标+盒子显示→拖图标进盒子→双击空白隐藏→右键删除→重启 app 布局保持→退出恢复。
+- [x] IconLayerWindow：启动时从 ConfigStore 加载 Fences → 创建 FenceControl 放画布 → 散落图标（不在任何 Fence 的 IconFilePaths 里的）正常显示。
+- [x] Fence/图标变更（拖拽/重命名/删除/新建）→ 更新 AppConfig.Fences → ConfigStore.Save（防抖，避免频繁写）。
+- [x] OnExit：保存当前布局 + 清 RunOnce（正常退出）+ RestoreExplorer。
+- [x] build + test 全绿 → `git tag m2-fences`。
+- [x] 真机冒烟：接管→图标+盒子显示→拖图标进盒子→双击空白隐藏→右键删除→重启 app 布局保持→退出恢复。
 
 ## 风险与对策
 
