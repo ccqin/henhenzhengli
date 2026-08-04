@@ -5,13 +5,14 @@ using Serilog;
 namespace DesktopManager.App;
 
 /// <summary>M3-T6：显示器拓扑变化监听（热插拔/分辨率/DPI/主屏切换）。
-/// message-only 窗口收 <c>WM_DISPLAYCHANGE</c>（拓扑切换过程会连发多条 → 500ms 防抖），
+/// 隐藏**顶层**窗口收 <c>WM_DISPLAYCHANGE</c>（拓扑切换过程会连发多条 → 500ms 防抖），
 /// 稳定后回 UI 线程发 <see cref="DisplayChanged"/>，host 据此重建窗口集。
-/// <para>用独立 message-only 窗口而非挂某个图标层窗口：重建过程窗口会关/建，监听器不能跟着死。</para></summary>
+/// <para>真机踩坑：message-only 窗口（HWND_MESSAGE 子窗）收不到 HWND_BROADCAST 广播 →
+/// 重建从不触发（拔线窗口不关、插回不建窗）。必须用顶层窗口（ParentWindow=0），隐藏且放屏外。</para>
+/// <para>用独立窗口而非挂某个图标层窗口：重建过程窗口会关/建，监听器不能跟着死。</para></summary>
 public sealed class DisplayChangeWatcher : IDisposable
 {
     private const int WM_DISPLAYCHANGE = 0x007E;
-    private static readonly IntPtr HWND_MESSAGE = new(-3);
     private static readonly TimeSpan Debounce = TimeSpan.FromMilliseconds(500);
 
     private HwndSource? _source;
@@ -22,10 +23,9 @@ public sealed class DisplayChangeWatcher : IDisposable
 
     public void Attach()
     {
-        var p = new HwndSourceParameters("DisplayChangeWatcher", 1, 1)
-        {
-            ParentWindow = HWND_MESSAGE
-        };
+        // 顶层窗口（ParentWindow 缺省 0）才能收广播；1x1 放屏外，不可见不抢交互。
+        var p = new HwndSourceParameters("DisplayChangeWatcher", 1, 1);
+        p.SetPosition(-32000, -32000);
         _source = new HwndSource(p);
         _source.AddHook(WndProc);
         _debounce = new System.Threading.Timer(_ =>
