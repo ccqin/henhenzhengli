@@ -45,6 +45,23 @@ public partial class App : Application
         // **此模式绝不接管、不建窗口、不跑 sync**——只恢复后退出。
         bool isRestoreMode = e.Args.Length > 0 && Array.IndexOf(e.Args, "--restore-icons") >= 0;
         Log.Information("DesktopManager 启动，模式={Mode}", isRestoreMode ? "restore-icons" : "normal");
+
+        // M3-T1 诊断：--debug-monitors 模式。枚举显示器（含持久 ID）打印后退出，不接管不建窗。
+        // 验收用途：交换显示器排列顺序/插拔前后各跑一次，对比 PersistentId 是否稳定。
+        if (e.Args.Length > 0 && Array.IndexOf(e.Args, "--debug-monitors") >= 0)
+        {
+            foreach (var m in MonitorEnumerator.Enumerate())
+            {
+                Console.WriteLine(
+                    $"{(m.IsPrimary ? "[主屏] " : "")}{m.DeviceName} | PersistentId={m.PersistentId} | " +
+                    $"全屏=({m.X},{m.Y}) {m.Width}x{m.Height} | 工作区=({m.WorkX},{m.WorkY}) {m.WorkWidth}x{m.WorkHeight}");
+                Log.Information("--debug-monitors: {Device} {PersistentId} ({X},{Y} {W}x{H}) primary={P}",
+                    m.DeviceName, m.PersistentId, m.X, m.Y, m.Width, m.Height, m.IsPrimary);
+            }
+            Shutdown();
+            return;
+        }
+
         if (isRestoreMode)
         {
             // 断环守卫：主实例在跑 → 接管/恢复由主实例自己负责（退出时 RestoreExplorer），
@@ -72,6 +89,11 @@ public partial class App : Application
                 // 不再靠广播（explorer 未就绪时不可靠），改让 explorer 重读注册表，消除时序赌博。
                 // AutoRestartShell 自动拉起 explorer；若被禁则 ExplorerRestarter 内部兜底主动 Start。仅此崩溃恢复路径调用（disruptive：任务栏闪一下）。
                 ExplorerRestarter.Restart();
+                // 真机实验新发现（高频采样）：垂死 explorer 退出时会把内存「隐藏」状态冲刷回注册表
+                // （kill 后 ~260ms 把我们的 0 改回 1）→ 新 explorer 读到 1 仍隐藏图标。
+                // 对策：新 explorer 起来后再刷一次（注册表 0 + SW_SHOW 新 ListView）。
+                // 运行中 explorer 不会改写值（实验证实），第二次写入稳定。
+                restoreGuard.RestoreExplorerAfterShellRestart();
             }
             catch (System.Exception ex)
             {
