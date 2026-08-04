@@ -32,6 +32,11 @@ public sealed class RecoveryGuard
     /// <summary>恢复：让 explorer 原生桌面图标重新显示（正常退出调）。</summary>
     public void RestoreExplorer() => _detector.RestoreExplorer();
 
+    /// <summary>explorer 重启后恢复（--restore-icons 专用）：绕过 detector 直接调
+    /// ShowDesktopIconsAfterShellRestart（重刷注册表 + SW_SHOW 新 ListView），
+    /// 对策垂死 explorer 冲刷 HideIcons=1 的真机问题。</summary>
+    public void RestoreExplorerAfterShellRestart() => DesktopIconVisibility.ShowDesktopIconsAfterShellRestart();
+
     /// <summary>写 RunOnce 自清理兜底（I-3）：接管后调，崩溃未正常退出时下次登录自动恢复 HideIcons=0。</summary>
     public void SetSelfCleanupOnExit() => RunOnceSelfCleanup.SetSelfCleanupOnExit();
 

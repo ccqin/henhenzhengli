@@ -54,6 +54,34 @@ public static class DesktopIconVisibility
         SetListViewVisible(true);
     }
 
+    /// <summary>explorer 重启后专用恢复（真机实验结论：垂死 explorer 退出时会把内存「隐藏」状态
+    /// 冲刷回注册表，kill 后 ~260ms 覆盖我们的 0；新 explorer 启动读到 1 → 图标仍隐藏）。
+    /// 因此必须等新 explorer 起来后**再写一次** 0 + SW_SHOW 新建的 ListView（运行中 explorer 不会改写值，已验证）。
+    /// ListView 查找带重试（新 explorer 进程存在但桌面窗口树尚未建好的窗口期）。</summary>
+    public static void ShowDesktopIconsAfterShellRestart()
+    {
+        SetHidden(false);
+        SetListViewVisibleWithRetry(3000);
+    }
+
+    /// <summary>重试找 ListView 后 SW_SHOW（250ms 间隔，最多 timeoutMs）。找不到则放弃（注册表已 0，
+    /// 下次 explorer 重启读到 0 也会正常显示）。</summary>
+    private static void SetListViewVisibleWithRetry(int timeoutMs)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            IntPtr lv = FindDesktopListView();
+            if (lv != IntPtr.Zero)
+            {
+                ShowWindow(lv, SW_SHOW);
+                return;
+            }
+            if (sw.ElapsedMilliseconds >= timeoutMs) return;
+            Thread.Sleep(250);
+        }
+    }
+
     // ---------- 机制②：直接隐藏桌面图标 ListView（Win11 必需） ----------
     // Win11 上 explorer 不响应 WM_SETTINGCHANGE 重读 HideIcons（真机：注册表已写 1 但图标仍显示）。
     // 直接 ShowWindow(SW_HIDE) 桌面图标 ListView（SysListView32）立即生效，无需重启 explorer。
