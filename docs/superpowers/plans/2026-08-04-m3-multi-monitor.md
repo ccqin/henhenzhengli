@@ -1,6 +1,6 @@
 # M3 多屏（图标层）实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 图标层从「单窗口铺主屏」升级为「每显示器一个 IconLayerWindow」：Fence/散落图标按**显示器持久 ID** 归属，布局每屏独立持久化；拔线/插回/换顺序/改分辨率/DPI 变化后布局不串屏、不丢失。另加**设置页屏幕排列配置**（Wallpaper Engine 式）：按比例显示各显示器矩形，拖拽调整排列并应用到 Windows 真实拓扑。真机环境：双显示器（已确认）。
 
@@ -101,84 +101,84 @@ src/DesktopManager.Tests/
 
 ### M3-T3 — MultiMonitorHost + 每屏 IconLayerWindow（重构）
 
-- [ ] `IconLayerWindow` 构造签名改造：`IconLayerWindow(IConfigStore?, MonitorLayout layout, IReadOnlyList<FenceConfig> myFences, ...)` 或注入「显示器几何 + 本屏 Fence/位置子集」的等价参数对象；`SourceInitialized` 定位改用传入的工作区矩形（替代 `SystemParameters.WorkArea`）；`BuildAppConfigForSave` 输出项全部带上本屏 MonitorId。
+- [x] `IconLayerWindow` 构造签名改造：`IconLayerWindow(IConfigStore?, MonitorLayout layout, IReadOnlyList<FenceConfig> myFences, ...)` 或注入「显示器几何 + 本屏 Fence/位置子集」的等价参数对象；`SourceInitialized` 定位改用传入的工作区矩形（替代 `SystemParameters.WorkArea`）；`BuildAppConfigForSave` 输出项全部带上本屏 MonitorId。
   - 注意：每窗口独立 `IconExtractor` 共享方式不变（构造注入）；`_iconPositions`/`_fencedPaths` 语义不变，只是内容已经是本屏子集。
-- [ ] `MultiMonitorHost.cs`：
+- [x] `MultiMonitorHost.cs`：
   - `Attach(...)`：`MonitorEnumerator.Enumerate()` → 每屏建窗口（主屏窗口接管 ShellRestartWatcher hwnd 与双击隐藏等全局无关行为——各窗口行为本就独立）
   - 持有 `Dictionary<string PersistentId, IconLayerWindow>`；`Windows` 只读暴露
   - 启动分配：`MonitorAssignment` 算 Fence/位置子集 → 各窗口 `ApplySnapshot` 前注入
-- [ ] `App.xaml.cs`：`_iconLayer` 字段替换为 `_host`；`_sync.Changed` → `_host.Dispatch(diff)`（下条实现）；OnExit `_host.SaveAllNow()` + 关窗口。
-- [ ] `Dispatch(DesktopDiff)` 首版（保守正确即可）：
+- [x] `App.xaml.cs`：`_iconLayer` 字段替换为 `_host`；`_sync.Changed` → `_host.Dispatch(diff)`（下条实现）；OnExit `_host.SaveAllNow()` + 关窗口。
+- [x] `Dispatch(DesktopDiff)` 首版（保守正确即可）：
   - **Added**：按归属（已有 Fence → Fence 的 MonitorId；无归属 → 主屏）投给单个窗口的 `ApplyDiff`（仅含该条的 diff）
   - **Removed**：广播给**所有**窗口（窗口内无此 path 则 reconcile 自然 no-op，避免归属查询竞态）
-- [ ] 验收（双屏真机）：两屏各出现一个图标层窗口、各占自己工作区（不盖任务栏）；config 里的 Fence 全部在主屏（旧 config 迁移正确）；散落图标在主屏；副屏空白画布可右键新建收纳盒（T4 落盘后才有持久意义，先看功能通）。
-- [ ] commit。
+- [x] 验收（双屏真机）：两屏各出现一个图标层窗口、各占自己工作区（不盖任务栏）；config 里的 Fence 全部在主屏（旧 config 迁移正确）；散落图标在主屏；副屏空白画布可右键新建收纳盒（T4 落盘后才有持久意义，先看功能通）。
+- [x] commit。
 
 ### M3-T4 — 聚合持久化 + 新图标默认主屏
 
-- [ ] Save 聚合：ConfigStore 收归 `MultiMonitorHost` 持有；各窗口 `SaveFencesDebounced` 改为通知 host（事件/回调），host 聚合**所有窗口**的 Fences + IconPositions（各自已带 MonitorId）→ 防抖 Save；`SaveAllNow` 供 OnExit。
+- [x] Save 聚合：ConfigStore 收归 `MultiMonitorHost` 持有；各窗口 `SaveFencesDebounced` 改为通知 host（事件/回调），host 聚合**所有窗口**的 Fences + IconPositions（各自已带 MonitorId）→ 防抖 Save；`SaveAllNow` 供 OnExit。
   - 窗口内原 `_saveTimer` 逻辑上移到 host；窗口不再直接持 IConfigStore 写路径（读仍在启动注入）。
-- [ ] 新图标归属：`Dispatch` Added 无归属记录 → 主屏窗口 + 其 IconPositions 落盘时自动写主屏 MonitorId（T3 已做，这里补测试/日志确认）。
-- [ ] 验收（双屏）：副屏新建 Fence/拖个图标进副屏 Fence → 重启 app → 副屏内容原样；主屏内容不受影响；config.json 里各项 MonitorId 正确（手工看文件）。
-- [ ] commit。
+- [x] 新图标归属：`Dispatch` Added 无归属记录 → 主屏窗口 + 其 IconPositions 落盘时自动写主屏 MonitorId（T3 已做，这里补测试/日志确认）。
+- [x] 验收（双屏）：副屏新建 Fence/拖个图标进副屏 Fence → 重启 app → 副屏内容原样；主屏内容不受影响；config.json 里各项 MonitorId 正确（手工看文件）。
+- [x] commit。
 
 ### M3-T5 — 跨屏拖拽（UI spike）
 
-- [ ] 现有拖拽数据已含 `Text=FilePath`（app 内）与 FileDrop（外部），跨窗口 DoDragDrop WPF 原生支持（同一消息循环）。
-- [ ] 图标跨屏：A 屏散落图标拖到 B 屏画布空白 → B 屏 `IconCanvas_Drop` Text 分支：
+- [x] 现有拖拽数据已含 `Text=FilePath`（app 内）与 FileDrop（外部），跨窗口 DoDragDrop WPF 原生支持（同一消息循环）。
+- [x] 图标跨屏：A 屏散落图标拖到 B 屏画布空白 → B 屏 `IconCanvas_Drop` Text 分支：
   - 该 path 在 A 屏 `_looseIcons` → 从 A 移除（跨窗口协调经 host：host 提供 `MoveLoose(path, fromId, toId, dropPos)`）
   - 该 path 在 A 屏某 Fence → 出 Fence + 归 B 屏散落（dropPos 回填，复用 `_dropPosition` 机制）
   - 落盘：新 MonitorId + 新坐标（dropPos 已是 B 屏本地坐标，直接可用）
-- [ ] Fence 跨屏：FenceControl 拖出本窗口、落在另一屏画布 → host 迁移 FenceConfig（MonitorId 换 + X/Y 用 dropPos - Fence 尺寸偏移），源窗口移除、目标窗口 CreateFence + LoadIcons。
+- [x] Fence 跨屏：FenceControl 拖出本窗口、落在另一屏画布 → host 迁移 FenceConfig（MonitorId 换 + X/Y 用 dropPos - Fence 尺寸偏移），源窗口移除、目标窗口 CreateFence + LoadIcons。
   - Fence 拖动目前是窗内 Thumb/Move；跨窗 Drop 需目标窗口画布 AcceptDrop Text/Fence 两种 payload（Fence 用 `Text="fence:<id>"` 前缀区分，或自定义 DataFormat——倾向前缀，零新依赖）。
-- [ ] 拖到**非图标层窗口**（如文件夹）语义不变：FileDrop → 文件移动（现有行为，FileDrop 分支不受影响）。
-- [ ] 验收（双屏）：图标/Fence 跨屏拖拽成功、落盘、重启保持；拖拽中途拔线不崩（Drop 目标窗口消失 → DoDragDrop 自然取消）。
-- [ ] commit。
+- [x] 拖到**非图标层窗口**（如文件夹）语义不变：FileDrop → 文件移动（现有行为，FileDrop 分支不受影响）。
+- [x] 验收（双屏）：图标/Fence 跨屏拖拽成功、落盘、重启保持；拖拽中途拔线不崩（Drop 目标窗口消失 → DoDragDrop 自然取消）。
+- [x] commit。
 
 ### M3-T6 — DisplayChangeWatcher：热插拔/分辨率/DPI
 
-- [ ] `DisplayChangeWatcher.cs`：message-only 窗口（或挂主屏窗口 HwndSource hook）监听 `WM_DISPLAYCHANGE`；**500ms 防抖**（拓扑切换过程会连发多条）→ 事件 `DisplayChanged`。
-- [ ] host 响应（App 线程）：
+- [x] `DisplayChangeWatcher.cs`：message-only 窗口（或挂主屏窗口 HwndSource hook）监听 `WM_DISPLAYCHANGE`；**500ms 防抖**（拓扑切换过程会连发多条）→ 事件 `DisplayChanged`。
+- [x] host 响应（App 线程）：
   1. `SaveAllNow()`（先把现状落盘，防重建丢布局）
   2. 重新 `Enumerate()` → 与现有窗口集按 PersistentId diff：
      - 消失的屏 → 关窗口（布局已在 config，不删数据）
      - 新增的屏 → 建窗口 + 按 config 恢复该屏布局（插回原位恢复）
      - 存活的屏 → 仅移动/缩放到新工作区（`SetWindowPos`/WPF Left-Top-Width-Height；图标本地坐标**不换算**——工作区变小时超界项暂容忍，backlog 记一条）
   3. 主屏切换 → 无归属项的目标窗口可能变：重跑 Dispatch 的 Added 归属即可，存量不搬（可接受，记 backlog）
-- [ ] DPI：先 spike 现状（双屏不同缩放比，如 150%+100%）：窗口定位/图标尺寸是否正确（WPF 坐标是 DIP，Left/Top 按工作区 DIP 给即可）；若错位再引入每窗 `WM_DPICHANGED` 处理——**不在本任务默认范围内**，spike 结论写进 notes。
-- [ ] 验收（双屏）：拔副屏线 → 副屏窗口消失、主屏不受影响；插回 → 副屏布局原位恢复；改分辨率 → 窗口跟随工作区；整个过程无崩溃、config 不丢数据。
-- [ ] commit。
+- [x] DPI：先 spike 现状（双屏不同缩放比，如 150%+100%）：窗口定位/图标尺寸是否正确（WPF 坐标是 DIP，Left/Top 按工作区 DIP 给即可）；若错位再引入每窗 `WM_DPICHANGED` 处理——**不在本任务默认范围内**，spike 结论写进 notes。
+- [x] 验收（双屏）：拔副屏线 → 副屏窗口消失、主屏不受影响；插回 → 副屏布局原位恢复；改分辨率 → 窗口跟随工作区；整个过程无崩溃、config 不丢数据。
+- [x] commit。
 
 ### M3-T7 — 设置页：屏幕排列预览（只读）
 
-- [ ] 托盘菜单加「设置」项 → 打开 `SettingsWindow`（普通激活窗口，非 NOACTIVATE，单实例：已开则激活前置）。
-- [ ] 画布区：按**分辨率等比**画出每个显示器矩形（统一缩放因子适配画布；位置 = Windows 拓扑坐标平移归一化，负坐标屏也能摆下）。
+- [x] 托盘菜单加「设置」项 → 打开 `SettingsWindow`（普通激活窗口，非 NOACTIVATE，单实例：已开则激活前置）。
+- [x] 画布区：按**分辨率等比**画出每个显示器矩形（统一缩放因子适配画布；位置 = Windows 拓扑坐标平移归一化，负坐标屏也能摆下）。
   - 矩形内标注：持久 ID 短名（厂商#序列尾段，全 ID 太长）+ 分辨率 + 主屏标记（★）；选中态高亮边框。
   - 数据源：`MonitorEnumerator.Enumerate()`（含 PersistentId/几何/主屏）。
-- [ ] 底部按钮区（本任务只放「刷新」；「应用/重置」T8 加）。
-- [ ] 验收（双屏）：预览与 Windows 显示设置里的排列**方向/相对位置一致**（含左屏在右、竖屏等异形拓扑）；拔插后点刷新预览同步。
-- [ ] commit。
+- [x] 底部按钮区（本任务只放「刷新」；「应用/重置」T8 加）。
+- [x] 验收（双屏）：预览与 Windows 显示设置里的排列**方向/相对位置一致**（含左屏在右、竖屏等异形拓扑）；拔插后点刷新预览同步。
+- [x] commit。
 
 ### M3-T8 — 拖拽重排 + 吸附 + 应用到 Windows 拓扑
 
-- [ ] `ArrangementPlanner`（Core，TDD）：输入拖拽中矩形位置 + 其他矩形集合，输出吸附后位置：
+- [x] `ArrangementPlanner`（Core，TDD）：输入拖拽中矩形位置 + 其他矩形集合，输出吸附后位置：
   - 边缘吸附：与邻屏顶/底边对齐（阈值内自动贴齐，Windows 设置同款行为）；左右贴合（新矩形边贴现有矩形边，不留缝隙）
   - 重叠钳制：不允许与其他矩形重叠（重叠时沿拖拽轴推回到最近合法位）；连通性约束：新位置必须与至少一个现有矩形有边接触（Windows 要求显示拓扑连通）——违反时钳到最近合法位
-- [ ] 测试（先红）：顶/底对齐吸附、左右贴合、重叠推开、断连钳回、无邻屏时自由放置；阈值边界各 case。TDD 红→绿。
-- [ ] UI：矩形可拖（Thumb/DragDelta）实时走 Planner 吸附；拖动中半透明 + 吸附辅助线（可选，先不做）。
-- [ ] `DisplayTopologyApplier`（Native spike）：新拓扑提交：
+- [x] 测试（先红）：顶/底对齐吸附、左右贴合、重叠推开、断连钳回、无邻屏时自由放置；阈值边界各 case。TDD 红→绿。
+- [x] UI：矩形可拖（Thumb/DragDelta）实时走 Planner 吸附；拖动中半透明 + 吸附辅助线（可选，先不做）。
+- [x] `DisplayTopologyApplier`（Native spike）：新拓扑提交：
   - 首选 legacy API（实现简单、文档充分）：逐屏 `ChangeDisplaySettingsEx(deviceName, DEVMODE{dmFields=DM_POSITION, dmPosition=新坐标}, CDS_UPDATEREGISTRY|CDS_NORESET)` → 最后 `ChangeDisplaySettingsEx(null, null, 0)` 一次性生效
   - 失败退化/备选：`SetDisplayConfig`（DISPLAYCONFIG 路径上改 source mode position）；legacy 不生效时 spike 切换
   - 返回值映射成友好错误（驱动拒绝/分辨率不兼容等）
-- [ ] 「应用」按钮：确认弹窗（提示屏幕会黑一下）→ Applier → 成功后等 `WM_DISPLAYCHANGE`（T6 watcher）自动重建图标层；「重置」= 重新枚举恢复当前真实拓扑预览（丢弃未应用拖拽）。
-- [ ] 验收（双屏）：拖拽把副屏换到主屏另一侧 → 应用 → **Windows 显示设置里拓扑真的变了**（鼠标跨屏方向随之变）→ 图标层自动跟随新拓扑重建（T6），两屏布局各自原位。
-- [ ] commit。
+- [x] 「应用」按钮：确认弹窗（提示屏幕会黑一下）→ Applier → 成功后等 `WM_DISPLAYCHANGE`（T6 watcher）自动重建图标层；「重置」= 重新枚举恢复当前真实拓扑预览（丢弃未应用拖拽）。
+- [x] 验收（双屏）：拖拽把副屏换到主屏另一侧 → 应用 → **Windows 显示设置里拓扑真的变了**（鼠标跨屏方向随之变）→ 图标层自动跟随新拓扑重建（T6），两屏布局各自原位。
+- [x] commit。
 
 ### M3-T9 — 接线收尾 + 冒烟 + tag
 
-- [ ] 清理：旧单窗口残留代码、`MainWindow.xaml`（若仍死代码）、过时注释。
-- [ ] build + test 全绿。
-- [ ] 双屏冒烟清单：
+- [x] 清理：旧单窗口残留代码、`MainWindow.xaml`（若仍死代码）、过时注释。
+- [x] build + test 全绿。
+- [x] 双屏冒烟清单：
   1. 启动：两屏各自图标层，原生图标（两屏）全部隐藏
   2. 副屏 Fence 增删拖 + 跨屏拖拽 + 重启保持
   3. 拔线/插回/换排列顺序 → 布局不串屏（**换顺序是 M0.5 的致命风险点，必须测**）
@@ -186,7 +186,7 @@ src/DesktopManager.Tests/
   5. 重启 explorer → 接管保持（双屏）
   6. 双击空白隐藏（每屏独立生效）
   7. 托盘退出 → 原生图标恢复、config 完整
-- [ ] `git tag m3-multimon` + README 里程碑表更新。
+- [x] `git tag m3-multimon` + README 里程碑表更新。
 
 ## 风险与对策
 
