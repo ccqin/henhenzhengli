@@ -97,6 +97,21 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             Left = work.Left; Top = work.Top; Width = work.Width; Height = work.Height;
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
+            // 真机修复（图标层浮在文件夹窗口上面）：SourceInitialized 时窗口尚未真正 Show，
+            // WPF 随后把新窗口插入 Z-order 顶部，上面的 SendToBottom 被覆盖。
+            // 双重保障：① ContentRendered（窗口已可见）后再置底一次；
+            // ② Activated 守卫：非输入态被意外激活（Alt+Tab/其他路径）立即压回底部。
+            ContentRendered += (_, _) =>
+            {
+                try { WindowInterop.SendToBottom(_hwnd); }
+                catch (System.ComponentModel.Win32Exception) { /* 窗口已无效则放弃 */ }
+            };
+            Activated += (_, _) =>
+            {
+                if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底
+                try { WindowInterop.SendToBottom(_hwnd); }
+                catch (System.ComponentModel.Win32Exception) { /* 同上 */ }
+            };
         };
 
         // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
