@@ -75,4 +75,5 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hi
 - M1 实现计划：`docs/superpowers/plans/2026-07-22-m1-desktop-takeover.md`
 - M2 实现计划：`docs/superpowers/plans/2026-07-22-m2-fences-hideicons.md`
 - M3 多屏实现计划：`docs/superpowers/plans/2026-08-04-m3-multi-monitor.md`
+- M4 壁纸层实现计划：`docs/superpowers/plans/2026-08-04-m4-wallpaper.md`
 - M0 spike 结论与验收：`docs/superpowers/notes/m0-spike-results.md`
