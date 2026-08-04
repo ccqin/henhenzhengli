@@ -44,11 +44,24 @@ public sealed class MultiMonitorHost
 
     public IReadOnlyCollection<IconLayerWindow> Windows => _windows.Values;
 
+    // M4：Z 看门狗——每 2s 幂等重锚「图标层置底」（壁纸窗 MakeClickThrough 自管置底）。
+    // 真机：壁纸窗曾因未知机制浮到非 topmost 带顶（z=40）盖住普通窗口/任务栏；看门狗兜底。
+    private System.Windows.Threading.DispatcherTimer? _zWatchdog;
+
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
         _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _zWatchdog = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _zWatchdog.Tick += (_, _) =>
+        {
+            foreach (var mon in _windows.Keys.ToList()) BottomPair(mon);
+        };
+        _zWatchdog.Start();
     }
 
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏建窗口并 Show。
@@ -88,6 +101,7 @@ public sealed class MultiMonitorHost
 
             // M4-T2：壁纸窗伴生（Z-order 由 BottomPair 统一编排）。
             var wp = new WallpaperWindow(m);
+            wp.Host = this;
             _wallpaperWindows[m.PersistentId] = wp;
             wp.Show();
             ApplyWallpaperTo(m.PersistentId);
@@ -124,6 +138,7 @@ public sealed class MultiMonitorHost
     /// 杜绝两窗各自 SendToBottom 互踩。</summary>
     private void BottomPair(string monitorId)
     {
+        // 图标层置底 + 壁纸窗插其正下方（幂等；看门狗每 2s 重锚，防壁纸窗浮高盖窗口/任务栏）。
         if (!_windows.TryGetValue(monitorId, out var win)) return;
         try
         {
@@ -137,9 +152,12 @@ public sealed class MultiMonitorHost
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
-            Log.Warning(ex, "BottomPair 失败（{Mon}）", monitorId);
+            Log.Warning(ex, "图标层置底失败（{Mon}）", monitorId);
         }
     }
+
+    /// <summary>M4：壁纸窗可见性同步后重锚 Z-order（ShowWindow 会顶高 Z-order，真机：GIF 屏壁纸浮到 z=33 盖住普通窗口）。</summary>
+    public void ReassertBottom(string monitorId) => BottomPair(monitorId);
 
     /// <summary>M4：把配置里的壁纸应用到指定屏窗口（无配置 → 窗口隐藏，系统壁纸透出）。</summary>
     private void ApplyWallpaperTo(string monitorId)
@@ -243,6 +261,7 @@ public sealed class MultiMonitorHost
             win.Show();
             // M4：新屏壁纸窗伴生（插回屏的壁纸按 config 原位恢复）。
             var wp = new WallpaperWindow(m);
+            wp.Host = this;
             _wallpaperWindows[m.PersistentId] = wp;
             wp.Show();
             ApplyWallpaperTo(m.PersistentId);
@@ -450,5 +469,6 @@ public sealed class MultiMonitorHost
         _windows.Clear();
         foreach (var wp in _wallpaperWindows.Values) wp.Close();
         _wallpaperWindows.Clear();
+        _zWatchdog?.Stop();
     }
 }

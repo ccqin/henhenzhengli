@@ -24,6 +24,15 @@ public static class WindowInterop
     private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT2 r);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT2 { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll", SetLastError = true)]
@@ -60,6 +69,50 @@ public static class WindowInterop
     {
         if (!SetWindowPos(hWnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
             throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    /// <summary>M4：壁纸窗嵌入桌面层（Wallpaper Engine 同款）：SetParent 到 Progman 成为子窗，
+    /// 排在 Progman 子窗最底（SHELLDLL_DefView 之下）。收益：① shell 永不把桌面内容当全屏 app
+    /// （真机：GIF 连续渲染触发全屏检测 → 任务栏被剥 topmost + 壁纸窗顶高盖任务栏）；② 桌面层天然在
+    /// 所有顶层窗（含图标层/任务栏）之下，Z-order 零编排。坐标转成 Progman 客户区（虚拟屏）相对坐标。
+    /// WS_EX_TRANSPARENT 让 hit-test 穿透到下层桌面（右键桌面菜单保留）。</summary>
+    private const int GWL_STYLE = -16;
+    private const long WS_POPUP = 0x80000000L;
+    private const long WS_CHILD = 0x40000000L;
+
+    public static void AttachToDesktopLayer(IntPtr hWnd, int monX, int monY, int monW, int monH)
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(0, "Progman not found");
+        SetParent(hWnd, progman);
+        // SetParent 不自动改样式（MSDN 要求调用者重置）：去 WS_POPUP 加 WS_CHILD，
+        // 否则「有 parent 的顶层样式窗」DWM 不合成（真机：窗口存在 vis=True 但不绘制）。
+        long st = GetStyle(hWnd);
+        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
+        GetWindowRect(progman, out var pr);
+        // 子窗坐标 = 虚拟屏坐标 - Progman 客户区原点；HWND_BOTTOM = Progman 子窗最底（DefView 之下）
+        SetWindowPos(hWnd, HWND_BOTTOM, monX - pr.Left, monY - pr.Top, monW, monH, 0);
+        long ex = GetExtendedStyle(hWnd);
+        SetExtendedStyle(hWnd, ex | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+    }
+
+    private static long GetStyle(IntPtr hWnd)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64() : GetWindowLong32(hWnd, GWL_STYLE);
+
+    private static void SetStyle(IntPtr hWnd, long value)
+    {
+        if (IntPtr.Size == 8) SetWindowLongPtr64(hWnd, GWL_STYLE, new IntPtr(value));
+        else SetWindowLong32(hWnd, GWL_STYLE, (int)value);
+    }
+
+    /// <summary>M4：桌面层子窗重定位（分辨率/排列变化）。坐标同 <see cref="AttachToDesktopLayer"/>。</summary>
+    public static void RepositionDesktopLayer(IntPtr hWnd, int monX, int monY, int monW, int monH)
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return;
+        GetWindowRect(progman, out var pr);
+        const uint SWP_NOZORDER = 0x0004; // 保持桌面层内 Z（已在最底）
+        SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOZORDER);
     }
 
     /// <summary>M4：把 <paramref name="hwnd"/> 精确插到 <paramref name="aboveHwnd"/> 正下方
