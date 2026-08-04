@@ -11,6 +11,15 @@ namespace DesktopManager.App;
 
 public partial class App : Application
 {
+    // 单实例 Mutex：主实例启动时持有。
+    // --restore-icons 模式启动时先探测：主实例在跑则直接退出（不恢复不重启 explorer）。
+    // 真机根因（explorer 无限重启循环）：RunOnce 由 explorer.exe **每次作为 shell 启动时**执行（不只是登录）。
+    // 手动重启 explorer → 新 explorer 跑 RunOnce(--restore-icons) → 同时主实例的 ShellRestartWatcher
+    // 收到 TaskbarCreated 重写 RunOnce → --restore-icons 杀 explorer → 新 explorer 又跑 RunOnce → 无限循环。
+    // Mutex 守卫断环：主实例在跑时 --restore-icons no-op（主实例退出时会自己 RestoreExplorer）。
+    private const string SingleInstanceMutexName = @"Local\DesktopManager.SingleInstance";
+    private Mutex? _singleInstanceMutex;
+
     private TaskbarIcon? _tray;
     private RecoveryGuard? _recoveryGuard;
     private IconLayerWindow? _iconLayer;
@@ -38,6 +47,20 @@ public partial class App : Application
         Log.Information("DesktopManager 启动，模式={Mode}", isRestoreMode ? "restore-icons" : "normal");
         if (isRestoreMode)
         {
+            // 断环守卫：主实例在跑 → 接管/恢复由主实例自己负责（退出时 RestoreExplorer），
+            // 这里若继续恢复+杀 explorer 会与主实例互踩成无限循环（见 SingleInstanceMutexName 注释）。
+            try
+            {
+                using var probe = Mutex.OpenExisting(SingleInstanceMutexName);
+                Log.Information("--restore-icons：主实例在运行，跳过恢复直接退出（防循环）");
+                Shutdown();
+                return;
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                // 主实例不在跑（崩溃/被杀后的真恢复场景）：继续下面的恢复流程。
+            }
+
             try
             {
                 Log.Information("--restore-icons 模式：恢复桌面图标（含 WM_SETTINGCHANGE 广播）后退出。");
@@ -63,6 +86,18 @@ public partial class App : Application
 
         _tray = (TaskbarIcon)FindResource("TrayIcon");
         _tray.ForceCreate();
+
+        // 单实例守卫：防双开导致双重接管（HideIcons/ListView 状态互踩）。
+        // 已有主实例则直接退出（不接管）。Mutex 由字段持有至进程退出；OnExit 里 Dispose。
+        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out bool createdNew);
+        if (!createdNew)
+        {
+            Log.Warning("已有主实例在运行，本次启动退出（防双重接管）");
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            Shutdown();
+            return;
+        }
 
         // 1. 恢复 + 接管：隐藏 explorer 原生桌面图标
         _recoveryGuard = new RecoveryGuard();
@@ -164,6 +199,7 @@ public partial class App : Application
             Log.Warning(ex, "OnExit RestoreExplorer/ClearSelfCleanup 失败，保留 RunOnce 兜底");
         }
         _tray?.Dispose();
+        _singleInstanceMutex?.Dispose();
         LogConfig.Shutdown(); // P1：base.OnExit 之前 flush 日志
         base.OnExit(e);
     }
