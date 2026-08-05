@@ -1,6 +1,6 @@
 # M5 跨屏壁纸（显示组）+ 设置窗口 实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 「显示组」：选哪些屏一组，组内共享一个壁纸源——静态大图横跨多屏拼接正确（每窗渲染自己区域）；视频同源同步播（起点/循环对齐不漂移）。同时落地**设置窗口**（托盘入口）：屏幕排列预览 + 显示组管理 + Wallpaper Engine 式**拖拽重排并应用到 Windows 真实拓扑**（M3-T7/T8 欠账）。真机：双显示器。
 
@@ -58,56 +58,56 @@ src/DesktopManager.Tests/
 
 ### M5-T1 — Core 模型 + 两个纯函数（TDD）
 
-- [ ] `DisplayGroup`：record { Id="", Name="", MonitorIds=[], WallpaperKind=Image, WallpaperPath="" }；`AppConfig` + `DisplayGroups`（默认空，旧 JSON 兼容 null-coalesce）。
-- [ ] `CrossScreenLayout`：
+- [x] `DisplayGroup`：record { Id="", Name="", MonitorIds=[], WallpaperKind=Image, WallpaperPath="" }；`AppConfig` + `DisplayGroups`（默认空，旧 JSON 兼容 null-coalesce）。
+- [x] `CrossScreenLayout`：
   - `Canvas(monitorRects) → (left,top,right,bottom)`：成员 rect 的 bounding box。
   - `CropRect(bitmapW, bitmapH, canvas, monitorRect, cover=true) → (x,y,w,h)` 像素坐标：源图按 **cover**（等比缩放铺满画布，超出裁掉，居中）映射到画布 → 本屏 rect 与画布交集 → 像素 rect。
   - 单屏/空组 → 返回整图（不裁剪）。
-- [ ] `ArrangementPlanner`（M3-T8 欠账）：`Plan(dragged(rect), others[]) → rect`：边缘吸附阈值 24px（顶/底对齐 + 左右贴合）；重叠推开（沿拖拽主轴）；连通钳制（必须与某矩形边接触，违反钳到最近合法位）。
-- [ ] 测试（先红）：`DisplayGroupTests`（round-trip + 旧 JSON）、`CrossScreenLayoutTests`（双屏左右/上下/单屏/大图 cover 居中/小图放大）、`ArrangementPlannerTests`（吸附/推开/连通/自由放置，阈值边界）。
-- [ ] TDD 红→绿→commit。
+- [x] `ArrangementPlanner`（M3-T8 欠账）：`Plan(dragged(rect), others[]) → rect`：边缘吸附阈值 24px（顶/底对齐 + 左右贴合）；重叠推开（沿拖拽主轴）；连通钳制（必须与某矩形边接触，违反钳到最近合法位）。
+- [x] 测试（先红）：`DisplayGroupTests`（round-trip + 旧 JSON）、`CrossScreenLayoutTests`（双屏左右/上下/单屏/大图 cover 居中/小图放大）、`ArrangementPlannerTests`（吸附/推开/连通/自由放置，阈值边界）。
+- [x] TDD 红→绿→commit。
 
 ### M5-T2 — 设置窗口骨架 + 显示组管理（UI）
 
-- [ ] 托盘菜单加「设置…」→ `SettingsWindow` 单实例（已开则 Activate 前置）。普通窗口（可激活、可焦点、任务栏可见）。
-- [ ] 排列预览区：`ItemsControl`/Canvas 画等比矩形（缩放因子适配 500x300 区域），矩形标注持久 ID 短名 + 分辨率 + 主屏 ★；数据源 `MonitorEnumerator.Enumerate()`；「刷新」按钮。
-- [ ] 显示组管理区：组列表（ListBox）+「新建组」（勾选当前在线屏成员）+「删除组」+ 选中组编辑：成员 CheckBox 列表 +「设置组壁纸…」（OpenFileDialog）+「清除组壁纸」。
-- [ ] 变更 → host API（`SetDisplayGroups(List<DisplayGroup>)`）→ 即时重渲染壁纸窗 + 防抖落盘（聚合 Save 带 DisplayGroups）。
-- [ ] 验收（双屏）：建组（双屏）→ 设组壁纸 → 两屏即时切换为组渲染占位（T3 前按各自铺满）→ 重启保持；删组 → 回独立壁纸。
-- [ ] commit。
+- [x] 托盘菜单加「设置…」→ `SettingsWindow` 单实例（已开则 Activate 前置）。普通窗口（可激活、可焦点、任务栏可见）。
+- [x] 排列预览区：`ItemsControl`/Canvas 画等比矩形（缩放因子适配 500x300 区域），矩形标注持久 ID 短名 + 分辨率 + 主屏 ★；数据源 `MonitorEnumerator.Enumerate()`；「刷新」按钮。
+- [x] 显示组管理区：组列表（ListBox）+「新建组」（勾选当前在线屏成员）+「删除组」+ 选中组编辑：成员 CheckBox 列表 +「设置组壁纸…」（OpenFileDialog）+「清除组壁纸」。
+- [x] 变更 → host API（`SetDisplayGroups(List<DisplayGroup>)`）→ 即时重渲染壁纸窗 + 防抖落盘（聚合 Save 带 DisplayGroups）。
+- [x] 验收（双屏）：建组（双屏）→ 设组壁纸 → 两屏即时切换为组渲染占位（T3 前按各自铺满）→ 重启保持；删组 → 回独立壁纸。
+- [x] commit。
 
 ### M5-T3 — 跨屏静态大图渲染（spike）
 
-- [ ] `WallpaperWindow.SetGroupWallpaper(path, cropRectPixels?)`：crop=null → 现有整屏逻辑；否则 `BitmapImage` → `TransformedBitmap`（缩放使画布 DIP 尺寸映射像素）→ `CroppedBitmap(crop)` → Image.Source（Stretch=Fill，裁剪已精确）。
-- [ ] host 分发：组成员屏 → 各自 CropRect（CrossScreenLayout）；组内在线屏 <2 → crop=null 降级。
-- [ ] 接缝验证图：生成/下载一张带网格+中线的测试大图（如 3840x1080），双屏拼接网格连续无错位。
-- [ ] 验收（双屏）：大图横跨无缝；改窗口大小（改分辨率）→ 重建后裁剪重算仍对齐。
-- [ ] commit。
+- [x] `WallpaperWindow.SetGroupWallpaper(path, cropRectPixels?)`：crop=null → 现有整屏逻辑；否则 `BitmapImage` → `TransformedBitmap`（缩放使画布 DIP 尺寸映射像素）→ `CroppedBitmap(crop)` → Image.Source（Stretch=Fill，裁剪已精确）。
+- [x] host 分发：组成员屏 → 各自 CropRect（CrossScreenLayout）；组内在线屏 <2 → crop=null 降级。
+- [x] 接缝验证图：生成/下载一张带网格+中线的测试大图（如 3840x1080），双屏拼接网格连续无错位。
+- [x] 验收（双屏）：大图横跨无缝；改窗口大小（改分辨率）→ 重建后裁剪重算仍对齐。
+- [x] commit。
 
 ### M5-T4 — 跨屏视频同步（spike）
 
-- [ ] `SyncedPlayback`：host 级，2s DispatcherTimer：组内视频窗取主窗（MonitorIds 序首在线屏）Position 为基准；其余窗 |Δ|>0.5s → `Position = master`（校正）；组窗同时起播（SetGroupWallpaper 时统一 Play）。
-- [ ] WallpaperWindow 暴露 `VideoPosition` get/set（包装 MediaElement.Position）。
-- [ ] 验收（双屏）：同视频双屏起播；手动制造漂移不可行 → 看日志 5 分钟无校正或校正次数 ≤1 且 |Δ| 收敛；肉眼画面同步。
-- [ ] commit。
+- [x] `SyncedPlayback`：host 级，2s DispatcherTimer：组内视频窗取主窗（MonitorIds 序首在线屏）Position 为基准；其余窗 |Δ|>0.5s → `Position = master`（校正）；组窗同时起播（SetGroupWallpaper 时统一 Play）。
+- [x] WallpaperWindow 暴露 `VideoPosition` get/set（包装 MediaElement.Position）。
+- [x] 验收（双屏）：同视频双屏起播；手动制造漂移不可行 → 看日志 5 分钟无校正或校正次数 ≤1 且 |Δ| 收敛；肉眼画面同步。
+- [x] commit。
 
 ### M5-T5 — 拖拽重排 + 应用拓扑（M3-T8 欠账）
 
-- [ ] 设置窗口排列区矩形可拖（Thumb/MouseCapture）：拖动实时走 `ArrangementPlanner.Plan`（吸附反馈：吸附时矩形边框高亮）。
-- [ ] 「应用排列」按钮：确认弹窗（屏幕会黑一下）→ `DisplayTopologyApplier.Apply(newPositions: deviceId→(x,y))`：
+- [x] 设置窗口排列区矩形可拖（Thumb/MouseCapture）：拖动实时走 `ArrangementPlanner.Plan`（吸附反馈：吸附时矩形边框高亮）。
+- [x] 「应用排列」按钮：确认弹窗（屏幕会黑一下）→ `DisplayTopologyApplier.Apply(newPositions: deviceId→(x,y))`：
   - Native：`EnumDisplayDevices`/QueryDisplayConfig 拿 GDI 设备名 → 逐屏 `ChangeDisplaySettingsEx(name, DEVMODE{dmFields=DM_POSITION, dmPosition}, CDS_UPDATEREGISTRY|CDS_NORESET)` → 收尾 `ChangeDisplaySettingsEx(null, null, 0)`；返回码映射友好错误（DISP_CHANGE_BADFLAGS 等）→ MessageBox，不改现状。
-- [ ] 成功后 `WM_DISPLAYCHANGE` → M3 `RebuildToMatchTopology` 自动跟随（图标层/壁纸窗重定位）；设置窗口排列区刷新。
-- [ ] 「重置」= 重枚举恢复真实拓扑预览（丢弃未应用拖拽）。
-- [ ] 验收（双屏）：拖副屏到右侧 → 应用 → Windows 显示设置里排列真变 + 鼠标跨屏方向变 + 图标层/壁纸跟随；失败路径（拖到不连通位置被钳制）可见。
-- [ ] commit。
+- [x] 成功后 `WM_DISPLAYCHANGE` → M3 `RebuildToMatchTopology` 自动跟随（图标层/壁纸窗重定位）；设置窗口排列区刷新。
+- [x] 「重置」= 重枚举恢复真实拓扑预览（丢弃未应用拖拽）。
+- [x] 验收（双屏）：拖副屏到右侧 → 应用 → Windows 显示设置里排列真变 + 鼠标跨屏方向变 + 图标层/壁纸跟随；失败路径（拖到不连通位置被钳制）可见。
+- [x] commit。
 
 ### M5-T6 — 优先级/降级/重建联动 + 冒烟 + tag
 
-- [ ] `ApplyWallpaperTo` 组优先：屏 ∈ 有壁纸的组 → 组渲染；否则独立壁纸；否则 Hidden。
-- [ ] 拔组成员屏：组内在线 <2 → 剩余屏降级单屏铺满；插回 → 恢复组渲染（M3 重建走 ApplyWallpaperTo 自动）。
-- [ ] build + test 全绿。
-- [ ] 双屏冒烟：建组→设大图→拼接无缝→换视频→同步→拔插屏降级/恢复→拖拽换排列应用→托盘退出恢复原生桌面。
-- [ ] `git tag m5-crossscreen` + README 里程碑表 + 账本更新。
+- [x] `ApplyWallpaperTo` 组优先：屏 ∈ 有壁纸的组 → 组渲染；否则独立壁纸；否则 Hidden。
+- [x] 拔组成员屏：组内在线 <2 → 剩余屏降级单屏铺满；插回 → 恢复组渲染（M3 重建走 ApplyWallpaperTo 自动）。
+- [x] build + test 全绿。
+- [x] 双屏冒烟：建组→设大图→拼接无缝→换视频→同步→拔插屏降级/恢复→拖拽换排列应用→托盘退出恢复原生桌面。
+- [x] `git tag m5-crossscreen` + README 里程碑表 + 账本更新。
 
 ## 风险与对策
 
