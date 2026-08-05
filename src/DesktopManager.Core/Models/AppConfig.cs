@@ -10,6 +10,8 @@ public record AppConfig
     public IReadOnlyList<IconPosition> IconPositions { get; init; } = Array.Empty<IconPosition>();
     // M4：每屏壁纸配置（MonitorId 归属，孤儿语义同 M3：离线屏配置保留，插回恢复）。
     public IReadOnlyList<WallpaperConfig> Wallpapers { get; init; } = Array.Empty<WallpaperConfig>();
+    // M5：显示组（组内屏共享壁纸源；成员屏渲染组优先于独立壁纸）。
+    public IReadOnlyList<DisplayGroup> DisplayGroups { get; init; } = Array.Empty<DisplayGroup>();
 }
 
 /// <summary>散落图标自由摆放位置持久化记录。FilePath 为键（OrdIgnoreCase），X/Y 为 LooseItemsControl 坐标系（与 IconCanvas 1:1）。

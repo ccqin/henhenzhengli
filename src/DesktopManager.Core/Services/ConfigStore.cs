@@ -32,7 +32,8 @@ public sealed class ConfigStore : IConfigStore
             {
                 Fences = cfg.Fences ?? Array.Empty<FenceConfig>(),
                 IconPositions = cfg.IconPositions ?? Array.Empty<IconPosition>(),
-                Wallpapers = cfg.Wallpapers ?? Array.Empty<WallpaperConfig>()
+                Wallpapers = cfg.Wallpapers ?? Array.Empty<WallpaperConfig>(),
+                DisplayGroups = cfg.DisplayGroups ?? Array.Empty<DisplayGroup>()
             };
         }
         catch (Exception ex) when (ex is JsonException or IOException)
