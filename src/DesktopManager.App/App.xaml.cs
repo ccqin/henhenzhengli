@@ -27,6 +27,7 @@ public partial class App : Application
     private ShellRestartWatcher? _shellWatcher;
     private DisplayChangeWatcher? _displayWatcher;
     private PlaybackGovernor? _governor;
+    private SettingsWindow? _settingsWindow;
 
     /// <summary>T7 配置文件路径：%AppData%\DesktopManager\config.json（与 I-3 RunOnce 同属用户级状态目录）。</summary>
     private static string GetConfigPath()
@@ -226,6 +227,18 @@ public partial class App : Application
             try { _recoveryGuard?.RestoreExplorer(); } catch { /* 已尽力 */ }
             throw;
         }
+    }
+
+    private void OnSettings_Clicked(object sender, RoutedEventArgs e)
+    {
+        // M5-T2：设置窗口单实例（已开则前置）。
+        if (_settingsWindow is null)
+        {
+            _settingsWindow = new SettingsWindow(_host!);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        }
+        _settingsWindow.Show();
+        _settingsWindow.Activate();
     }
 
     private void OnExit_Clicked(object sender, RoutedEventArgs e)

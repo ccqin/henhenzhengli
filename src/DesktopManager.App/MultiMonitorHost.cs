@@ -20,6 +20,8 @@ public sealed class MultiMonitorHost
     // M4：每屏壁纸窗口（与图标层 1:1 伴生，Z-order 在其正下方）+ 壁纸配置（单一真相源，孤儿含在内）。
     private readonly Dictionary<string, WallpaperWindow> _wallpaperWindows = new(StringComparer.Ordinal);
     private readonly List<WallpaperConfig> _wallpapers = new();
+    // M5：显示组（组壁纸优先于独立壁纸；成员离线/删组自动回退）。
+    private List<DisplayGroup> _displayGroups = new();
 
     // 孤儿（归属屏离线）：不进任何窗口，保存时原样带回（防布局数据丢失）。
     private readonly List<FenceConfig> _orphanFences = new();
@@ -74,6 +76,7 @@ public sealed class MultiMonitorHost
 
         var config = _store.Load();
         _wallpapers.AddRange(config.Wallpapers); // M4：壁纸配置（离线屏的也保留 = 孤儿语义）
+        _displayGroups = config.DisplayGroups.ToList(); // M5：显示组
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -195,14 +198,34 @@ public sealed class MultiMonitorHost
     /// <summary>M4：壁纸窗可见性同步后重锚 Z-order（ShowWindow 会顶高 Z-order，真机：GIF 屏壁纸浮到 z=33 盖住普通窗口）。</summary>
     public void ReassertBottom(string monitorId) => BottomPair(monitorId);
 
+    /// <summary>M5：显示组只读视图（设置窗口用）。</summary>
+    public IReadOnlyList<DisplayGroup> Groups => _displayGroups;
+
+    /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
+    public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
+    {
+        _displayGroups = groups.ToList();
+        foreach (var mon in _windows.Keys.ToList()) ApplyWallpaperTo(mon);
+        RequestSave();
+    }
+
+    /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null（隐藏）。</summary>
+    private WallpaperConfig? ResolveWallpaper(string monitorId)
+    {
+        var g = _displayGroups.FirstOrDefault(g =>
+            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(monitorId));
+        if (g is not null)
+            return new WallpaperConfig { MonitorId = monitorId, Kind = g.WallpaperKind, Path = g.WallpaperPath };
+        return _wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+    }
+
     /// <summary>M4：把配置里的壁纸应用到指定屏窗口（无配置 → 窗口隐藏，系统壁纸透出）。</summary>
     private void ApplyWallpaperTo(string monitorId)
     {
         if (!_wallpaperWindows.TryGetValue(monitorId, out var wp)) return;
-        var cfg = _wallpapers.FirstOrDefault(w =>
-            string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
-        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path}（共 {N} 条配置）",
-            monitorId, cfg is not null, cfg?.Path ?? "(null)", _wallpapers.Count);
+        var cfg = ResolveWallpaper(monitorId);
+        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path}（独立 {N} 条 + 组 {G} 个）",
+            monitorId, cfg is not null, cfg?.Path ?? "(null)", _wallpapers.Count, _displayGroups.Count);
         wp.SetWallpaper(cfg);
     }
 
@@ -469,8 +492,14 @@ public sealed class MultiMonitorHost
             fences.AddRange(f);
             positions.AddRange(p);
         }
-        // M4：壁纸配置整体带回（含离线屏孤儿——_wallpapers 从不过滤）。
-        return new AppConfig { Fences = fences, IconPositions = positions, Wallpapers = _wallpapers.ToList() };
+        // M4/M5：壁纸配置 + 显示组整体带回（含离线屏孤儿——从不过滤）。
+        return new AppConfig
+        {
+            Fences = fences,
+            IconPositions = positions,
+            Wallpapers = _wallpapers.ToList(),
+            DisplayGroups = _displayGroups.ToList()
+        };
     }
 
     /// <summary>立即聚合保存（不等防抖）。OnExit 调用；随后 CloseAll。</summary>

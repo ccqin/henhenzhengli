@@ -10,6 +10,8 @@
                         Visibility="Visible">
             <tb:TaskbarIcon.ContextMenu>
                 <ContextMenu>
+                    <MenuItem Header="设置(_S)…" Click="OnSettings_Clicked"/>
+                    <Separator/>
                     <MenuItem Header="退出(_X)" Click="OnExit_Clicked"/>
                 </ContextMenu>
             </tb:TaskbarIcon.ContextMenu>

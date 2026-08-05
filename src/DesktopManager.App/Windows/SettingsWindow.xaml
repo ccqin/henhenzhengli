@@ -1,0 +1,50 @@
+<Window x:Class="DesktopManager.App.Windows.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DesktopManager 设置" Width="900" Height="600"
+        WindowStartupLocation="CenterScreen" Background="#1E1E2E" Foreground="#EEE">
+    <!-- M5-T2：设置窗口（普通激活窗口）。左：屏幕排列预览（T5 加拖拽+应用）；右：显示组管理。 -->
+    <Grid Margin="14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="1.3*"/>
+            <ColumnDefinition Width="16"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 左：排列预览 -->
+        <StackPanel Grid.Column="0">
+            <TextBlock Text="屏幕排列" FontSize="16" Margin="0,0,0,8"/>
+            <Canvas x:Name="PreviewCanvas" Width="560" Height="360" Background="#14141F" ClipToBounds="True"/>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <Button x:Name="ApplyArrangementButton" Content="应用排列" Padding="14,6" Margin="0,0,8,0"
+                        Click="ApplyArrangement_Click" IsEnabled="False"
+                        ToolTip="把拖拽后的排列应用到 Windows 真实拓扑（M5-T5 启用）"/>
+                <Button Content="重置" Padding="14,6" Margin="0,0,8,0" Click="ResetPreview_Click"/>
+                <Button Content="刷新" Padding="14,6" Click="RefreshMonitors_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="PreviewHint" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="#999"
+                       Text="拖拽矩形可调整排列（M5-T5）；「应用排列」会改变 Windows 显示拓扑，屏幕会黑一下。"/>
+        </StackPanel>
+
+        <!-- 右：显示组 -->
+        <StackPanel Grid.Column="2">
+            <TextBlock Text="显示组（组内屏共享壁纸）" FontSize="16" Margin="0,0,0,8"/>
+            <ListBox x:Name="GroupList" Height="140" SelectionChanged="GroupList_SelectionChanged"
+                     Background="#14141F" Foreground="#EEE" BorderBrush="#333"/>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,12">
+                <Button Content="新建组" Padding="14,6" Margin="0,0,8,0" Click="NewGroup_Click"/>
+                <Button Content="删除组" Padding="14,6" Click="DeleteGroup_Click"/>
+            </StackPanel>
+
+            <TextBlock Text="成员" Foreground="#999" Margin="0,0,0,4"/>
+            <StackPanel x:Name="MemberChecks" MinHeight="70"/>
+
+            <TextBlock Text="组壁纸" Foreground="#999" Margin="0,10,0,4"/>
+            <TextBlock x:Name="GroupWallpaperText" Text="（无）" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal">
+                <Button Content="设置组壁纸…" Padding="14,6" Margin="0,0,8,0" Click="SetGroupWallpaper_Click"/>
+                <Button Content="清除组壁纸" Padding="14,6" Click="ClearGroupWallpaper_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
