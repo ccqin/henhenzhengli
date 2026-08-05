@@ -50,6 +50,9 @@ public sealed class MultiMonitorHost
     // 真机：壁纸窗曾因未知机制浮到非 topmost 带顶（z=40）盖住普通窗口/任务栏；看门狗兜底。
     private System.Windows.Threading.DispatcherTimer? _zWatchdog;
 
+    // M5-T4：组内视频漂移校正——2s 轮询，首成员为基准，|Δ|>0.5s 对齐。
+    private System.Windows.Threading.DispatcherTimer? _videoSync;
+
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
@@ -64,6 +67,47 @@ public sealed class MultiMonitorHost
             foreach (var mon in _windows.Keys.ToList()) BottomPair(mon);
         };
         _zWatchdog.Start();
+
+        _videoSync = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _videoSync.Tick += (_, _) => SyncGroupVideos();
+        _videoSync.Start();
+    }
+
+    /// <summary>M5-T4：组内视频同步。基准 = 组成员序首个在线视频窗；其余 |Δ|&gt;0.5s → 对齐。
+    /// 校正跳变可接受（壁纸语义非观影）；暂停态位置冻结天然一致，无需特判。</summary>
+    private void SyncGroupVideos()
+    {
+        foreach (var g in _displayGroups)
+        {
+            if (string.IsNullOrWhiteSpace(g.WallpaperPath) || g.WallpaperKind != WallpaperKind.Video) continue;
+            var wins = g.MonitorIds
+                .Where(id => _wallpaperWindows.ContainsKey(id))
+                .Select(id => _wallpaperWindows[id])
+                .Where(w => w.IsVideo)
+                .ToList();
+            if (wins.Count < 2) continue;
+
+            var master = wins[0];
+            TimeSpan masterPos;
+            try { masterPos = master.VideoPosition; }
+            catch { continue; }
+            foreach (var w in wins.Skip(1))
+            {
+                try
+                {
+                    var drift = (w.VideoPosition - masterPos).Duration();
+                    if (drift > TimeSpan.FromSeconds(0.5))
+                    {
+                        w.VideoPosition = masterPos;
+                        Log.Information("视频同步校正：{Mon} 漂移={Drift:F1}s → 对齐基准", w.MonitorId, drift.TotalSeconds);
+                    }
+                }
+                catch { /* 窗口状态异常跳过，下轮再试 */ }
+            }
+        }
     }
 
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏建窗口并 Show。
@@ -545,5 +589,6 @@ public sealed class MultiMonitorHost
         foreach (var wp in _wallpaperWindows.Values) wp.Close();
         _wallpaperWindows.Clear();
         _zWatchdog?.Stop();
+        _videoSync?.Stop();
     }
 }
