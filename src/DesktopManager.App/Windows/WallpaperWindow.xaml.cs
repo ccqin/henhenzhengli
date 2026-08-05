@@ -1,41 +1,68 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using DesktopManager.Core.Models;
 using DesktopManager.Native;
 using Serilog;
 
 namespace DesktopManager.App.Windows;
 
-/// <summary>M4 壁纸播放窗口（每显示器一个，位于本屏图标层正下方）。
-/// 全屏整屏 rect（含任务栏区）、点击穿透、NOACTIVATE。
-/// **不开 AllowsTransparency**：MediaElement 在透明窗内不渲染（WPF 硬约束）；无壁纸用 Visibility=Hidden
-/// 让系统壁纸透出。Z-order 由 host 用 BottomPair 编排（图标层置底 + 本窗插其下）。
-/// 内容三态：静态图（Image）/ 视频（MediaElement 无声循环）/ GIF（帧动画，固定 10fps 钳制）。</summary>
+/// <summary>M4/M5 壁纸播放窗口（每显示器一个）。
+/// 单屏模式：内容铺满本窗。组模式（<paramref name="canvas"/> 非 null）：内容按 cover 缩放到虚拟画布尺寸，
+/// 负偏移放置，窗口 ClipToBounds 裁出本屏区域——跨屏拼接接缝天然对齐（图/GIF/视频统一路径）。
+/// 整屏高 -2px（缝藏任务栏后）：破 shell「全屏 app」检测（M4 真机教训）。
+/// Z-order/可见性 Win32 兜底见 SyncNativeState；host 看门狗重锚底序。</summary>
 public partial class WallpaperWindow : Window
 {
     private readonly string _monitorId;
     private IntPtr _hwnd;
+    private (int X, int Y, int W, int H) _monRect;
 
-    // GIF 帧动画：DispatcherTimer 切帧（MVP 固定 10fps；逐帧 delay 解析记 backlog）。
+    // 内容元素（代码创建，Canvas 偏移放置）
+    private readonly Image _image = new() { Stretch = Stretch.Fill, Visibility = Visibility.Collapsed };
+    private readonly MediaElement _video = new()
+    {
+        LoadedBehavior = MediaState.Manual,
+        UnloadedBehavior = MediaState.Manual,
+        Volume = 0,
+        IsHitTestVisible = false,
+        Stretch = Stretch.Fill,
+        Visibility = Visibility.Collapsed
+    };
+
+    // GIF 帧动画（MVP 固定 10fps 钳制；逐帧 delay 解析 backlog）
     private GifBitmapDecoder? _gif;
-    private System.Windows.Threading.DispatcherTimer? _gifTimer;
+    private DispatcherTimer? _gifTimer;
     private int _gifFrame;
 
-    // 播放状态（Governor 幂等暂停/恢复用）。
     private bool _paused;
-    private bool _hasPlayback; // 当前壁纸是视频/GIF（有可暂停的播放）
+    private bool _hasPlayback;
 
-    /// <summary>本窗口归属屏持久 ID（host 按 MonitorId 分发壁纸配置）。</summary>
+    // 放置规格（RepositionTo / 内容加载后重算）
+    private WallpaperKind _kind = WallpaperKind.Image;
+    private IntRect? _canvas;           // 组模式虚拟画布；null = 单屏模式
+    private double _natW, _natH;        // 图像自然尺寸（cover 计算用）
+
+    /// <summary>本窗口归属屏持久 ID。</summary>
     public string MonitorId => _monitorId;
 
-    /// <summary>M4：多屏宿主（host 创建时注入），Z-order 重锚用。</summary>
-    public MultiMonitorHost? Host { get; set; }
-
-    /// <summary>当前有可暂停的播放内容且未在暂停中（Governor 决策输入之一，仅日志/诊断用）。</summary>
+    /// <summary>当前有可暂停播放且未暂停（Governor 诊断用）。</summary>
     public bool IsPlaying => _hasPlayback && !_paused;
+
+    /// <summary>M5-T4：视频当前位置（组内漂移校正用）。</summary>
+    public TimeSpan VideoPosition
+    {
+        get => _video.Position;
+        set => _video.Position = value;
+    }
+
+    /// <summary>M5-T4：是否视频模式（校正只针对视频）。</summary>
+    public bool IsVideo => _kind == WallpaperKind.Video && _hasPlayback;
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -45,64 +72,80 @@ public partial class WallpaperWindow : Window
     public WallpaperWindow(MonitorInfo monitor)
     {
         _monitorId = monitor.PersistentId;
+        _monRect = (monitor.X, monitor.Y, monitor.Width, monitor.Height);
         InitializeComponent();
-        // 整屏但底部留 2px 缝（藏在任务栏后，视觉不可见）：shell 的「全屏 app」检测要求精确覆盖
-        // 整显示器（真机：GIF 连续渲染 + 全覆盖触发检测 → 任务栏被剥 topmost + 壁纸窗顶高盖任务栏）。
-        // 破覆盖即破检测；任务栏 48px 高，2px 缝不可见。
+        RootCanvas.Children.Add(_image);
+        RootCanvas.Children.Add(_video);
+        // 整屏但底部留 2px 缝（M4 真机教训：破 shell 全屏检测）。
         Left = monitor.X; Top = monitor.Y; Width = monitor.Width; Height = monitor.Height - 2;
         SourceInitialized += (_, _) =>
         {
             _hwnd = new WindowInteropHelper(this).Handle;
-            WindowInterop.MakeClickThrough(_hwnd); // 置底 + 点击穿透 + NOACTIVATE
+            WindowInterop.MakeClickThrough(_hwnd);
         };
-        WallpaperVideo.MediaEnded += (_, _) =>
+        _video.MediaEnded += (_, _) =>
         {
-            // 无声循环：播完回起点重播。暂停态不自动重播。
             if (_paused) return;
-            try { WallpaperVideo.Position = TimeSpan.Zero; WallpaperVideo.Play(); }
+            try { _video.Position = TimeSpan.Zero; _video.Play(); }
             catch (Exception ex) { Log.Warning(ex, "视频循环重播失败：{Mon}", _monitorId); }
         };
-        WallpaperVideo.MediaFailed += (_, e) =>
+        _video.MediaFailed += (_, e) =>
         {
-            // 编码不支持（HEVC 等）：不崩，回退无壁纸（日志可诊断）。
             Log.Warning("视频播放失败（编码不支持？），回退系统壁纸：{Mon} {Err}", _monitorId, e.ErrorException?.Message);
             StopPlayback();
             Visibility = Visibility.Hidden;
             SyncNativeState();
         };
-        Visibility = Visibility.Hidden; // 无壁纸默认：不遮系统壁纸
+        _video.MediaOpened += (_, _) =>
+        {
+            // 视频自然尺寸已知 → cover 重算（组模式接缝对齐）。
+            if (_video.NaturalVideoWidth > 0)
+            {
+                _natW = _video.NaturalVideoWidth;
+                _natH = _video.NaturalVideoHeight;
+                ApplyPlacement();
+            }
+        };
+        Visibility = Visibility.Hidden;
     }
 
-    /// <summary>M3-T6 同款：分辨率/排列变化后重定位到新整屏 rect。</summary>
+    /// <summary>M3-T6 同款：拓扑变化重定位。</summary>
     public void RepositionTo(MonitorInfo monitor)
     {
+        _monRect = (monitor.X, monitor.Y, monitor.Width, monitor.Height);
         Left = monitor.X; Top = monitor.Y;
-        Width = monitor.Width; Height = monitor.Height - 2; // 同构造：2px 缝破全屏检测
+        Width = monitor.Width; Height = monitor.Height - 2;
+        ApplyPlacement();
     }
 
-    /// <summary>应用壁纸配置。null/空路径/文件不存在 → 隐藏（系统壁纸透出）。
-    /// Kind 以扩展名实际校正（防用户改扩展名）：.gif→Gif；视频扩展名→Video；其余→Image。</summary>
-    public void SetWallpaper(WallpaperConfig? config)
+    /// <summary>应用壁纸。canvas=null 单屏铺满；非 null 组模式跨屏裁剪。</summary>
+    public void SetWallpaper(WallpaperConfig? config, IntRect? canvas = null)
     {
         StopPlayback();
+        _canvas = canvas;
         if (config is null || string.IsNullOrWhiteSpace(config.Path) || !File.Exists(config.Path))
         {
-            WallpaperImage.Source = null;
+            _image.Source = null;
             Visibility = Visibility.Hidden;
             SyncNativeState();
             return;
         }
 
-        var kind = WallpaperConfig.DetectKind(config.Path);
+        _kind = WallpaperConfig.DetectKind(config.Path);
         try
         {
-            switch (kind)
+            switch (_kind)
             {
                 case WallpaperKind.Video:
-                    ApplyVideo(config.Path);
+                    _natW = _natH = 0; // MediaOpened 后 cover 重算
+                    _image.Visibility = Visibility.Collapsed;
+                    _video.Visibility = Visibility.Visible;
+                    _video.Source = new Uri(config.Path);
+                    _video.Play();
+                    _hasPlayback = true;
                     break;
                 case WallpaperKind.Gif:
-                    if (!ApplyGif(config.Path)) ApplyImage(config.Path); // 单帧 GIF 退化为静态图
+                    if (!ApplyGif(config.Path)) ApplyImage(config.Path);
                     break;
                 default:
                     ApplyImage(config.Path);
@@ -110,16 +153,19 @@ public partial class WallpaperWindow : Window
             }
             Visibility = Visibility.Visible;
             SyncNativeState();
-            // WPF 首帧布局可能再隐藏（真机：同步 ShowWindow 后仍 vis=False）→ 延迟一帧强制对齐。
-            Dispatcher.BeginInvoke(new Action(SyncNativeState), System.Windows.Threading.DispatcherPriority.Loaded);
-            Log.Information("壁纸已应用: {Path} kind={Kind}", config.Path, kind);
+            ApplyPlacement();
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                SyncNativeState();
+                ApplyPlacement(); // 首帧后 ActualWidth 可用
+            }), DispatcherPriority.Loaded);
+            Log.Information("壁纸已应用: {Path} kind={Kind} group={Group}", config.Path, _kind, canvas is not null);
         }
         catch (Exception ex)
         {
-            // 文件损坏/格式不支持：不崩，回退无壁纸（日志可诊断）。
             Log.Warning(ex, "壁纸加载失败，回退系统壁纸：{Path}", config.Path);
             StopPlayback();
-            WallpaperImage.Source = null;
+            _image.Source = null;
             Visibility = Visibility.Hidden;
             SyncNativeState();
         }
@@ -129,69 +175,105 @@ public partial class WallpaperWindow : Window
     {
         var bmp = new BitmapImage();
         bmp.BeginInit();
-        bmp.CacheOption = BitmapCacheOption.OnLoad; // 读完即释放文件句柄（不锁用户壁纸文件）
+        bmp.CacheOption = BitmapCacheOption.OnLoad;
         bmp.UriSource = new Uri(path);
         bmp.EndInit();
-        bmp.Freeze(); // 跨线程安全 + 省内存
-        WallpaperImage.Source = bmp;
-        WallpaperVideo.Visibility = Visibility.Collapsed;
+        bmp.Freeze();
+        _natW = bmp.PixelWidth;
+        _natH = bmp.PixelHeight;
+        _image.Source = bmp;
+        _image.Visibility = Visibility.Visible;
+        _video.Visibility = Visibility.Collapsed;
         _hasPlayback = false;
     }
 
-    private void ApplyVideo(string path)
-    {
-        WallpaperImage.Source = null;
-        WallpaperVideo.Visibility = Visibility.Visible;
-        WallpaperVideo.Source = new Uri(path);
-        WallpaperVideo.Play();
-        _hasPlayback = true;
-    }
-
-    /// <summary>GIF 帧动画。返回 false = 单帧（调用方退化为静态图）。</summary>
     private bool ApplyGif(string path)
     {
         _gif = new GifBitmapDecoder(new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
         if (_gif.Frames.Count <= 1) { _gif = null; return false; }
-
+        _natW = _gif.Frames[0].PixelWidth;
+        _natH = _gif.Frames[0].PixelHeight;
         _gifFrame = 0;
-        WallpaperImage.Source = _gif.Frames[0];
-        WallpaperVideo.Visibility = Visibility.Collapsed;
+        _image.Source = _gif.Frames[0];
+        _image.Visibility = Visibility.Visible;
+        _video.Visibility = Visibility.Collapsed;
         _hasPlayback = true;
-        _gifTimer = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(100) // 固定 10fps 钳制（逐帧 delay 解析记 backlog）
-        };
+        _gifTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _gifTimer.Tick += (_, _) =>
         {
             if (_gif is null) return;
             _gifFrame = (_gifFrame + 1) % _gif.Frames.Count;
-            WallpaperImage.Source = _gif.Frames[_gifFrame];
+            _image.Source = _gif.Frames[_gifFrame];
         };
         _gifTimer.Start();
         return true;
     }
 
-    /// <summary>M4-T4：Governor 暂停（全屏应用/电池/锁屏）。幂等。</summary>
+    /// <summary>内容放置：单屏铺满窗口；组模式按 cover 缩放到虚拟画布 + 负偏移裁出本屏。</summary>
+    private void ApplyPlacement()
+    {
+        double winW = ActualWidth, winH = ActualHeight;
+        if (winW <= 0 || winH <= 0) return;
+
+        if (_canvas is null)
+        {
+            Place(_image, 0, 0, winW, winH);
+            Place(_video, 0, 0, winW, winH);
+            return;
+        }
+
+        var canvas = _canvas;
+        var mon = new IntRect(_monRect.X, _monRect.Y, _monRect.X + _monRect.W, _monRect.Y + _monRect.H);
+        double offX = -(mon.Left - canvas.Left);
+        double offY = -(mon.Top - canvas.Top);
+
+        if (_kind == WallpaperKind.Video && _natW <= 0)
+        {
+            // 视频自然尺寸未知（MediaOpened 前）：先 Fill 画布，opened 后 cover 重算。
+            Place(_video, offX, offY, canvas.Width, canvas.Height);
+            return;
+        }
+
+        if (_natW > 0 && _natH > 0)
+        {
+            // cover：等比缩放铺满画布，超出居中裁掉（与 CrossScreenLayout.CropRect 同语义）
+            double s = Math.Max(canvas.Width / _natW, canvas.Height / _natH);
+            double cw = _natW * s, ch = _natH * s;
+            double cx = offX + (canvas.Width - cw) / 2;
+            double cy = offY + (canvas.Height - ch) / 2;
+            Place(_image, cx, cy, cw, ch);
+            Place(_video, cx, cy, cw, ch);
+        }
+    }
+
+    private static void Place(FrameworkElement el, double l, double t, double w, double h)
+    {
+        Canvas.SetLeft(el, l);
+        Canvas.SetTop(el, t);
+        el.Width = w;
+        el.Height = h;
+    }
+
+    /// <summary>M4-T4：暂停（幂等）。</summary>
     public void Pause()
     {
         if (_paused || !_hasPlayback) return;
         _paused = true;
-        try { WallpaperVideo.Pause(); } catch { /* 无视频内容时 no-op */ }
+        try { _video.Pause(); } catch { /* 无视频 no-op */ }
         _gifTimer?.Stop();
         Log.Information("壁纸暂停：{Mon}", _monitorId);
     }
 
-    /// <summary>M4-T4：Governor 恢复。幂等。</summary>
+    /// <summary>M4-T4：恢复（幂等）。</summary>
     public void Resume()
     {
         if (!_paused || !_hasPlayback) return;
         _paused = false;
-        try { WallpaperVideo.Play(); } catch { /* 无视频内容时 no-op */ }
+        try { _video.Play(); } catch { /* 无视频 no-op */ }
         _gifTimer?.Start();
         Log.Information("壁纸恢复：{Mon}", _monitorId);
     }
 
-    /// <summary>停掉一切播放（换壁纸/隐藏前调）。</summary>
     private void StopPlayback()
     {
         _gifTimer?.Stop();
@@ -200,19 +282,20 @@ public partial class WallpaperWindow : Window
         _gifFrame = 0;
         try
         {
-            WallpaperVideo.Stop();
-            WallpaperVideo.Source = null;
+            _video.Stop();
+            _video.Source = null;
         }
-        catch { /* 未加载时 no-op */ }
-        WallpaperVideo.Visibility = Visibility.Collapsed;
+        catch { /* 未加载 no-op */ }
+        _video.Visibility = Visibility.Collapsed;
+        _image.Visibility = Visibility.Collapsed;
         _hasPlayback = false;
         _paused = false;
+        _natW = _natH = 0;
     }
 
-    /// <summary>真机兜底：WPF Visibility 在创建时序下可能不落 WS_VISIBLE（日志 Visible 但 IsWindowVisible=false）→ Win32 强制对齐。</summary>
+    /// <summary>可见性 Win32 兜底（M4 真机：WPF Visibility 可能不落 WS_VISIBLE）。</summary>
     private void SyncNativeState()
     {
-        // 桌面层子窗只管可见性（Z-order 由桌面层天然保证；样式在 AttachToDesktopLayer 一次到位）。
         if (_hwnd == IntPtr.Zero) return;
         ShowWindow(_hwnd, Visibility == Visibility.Visible ? SW_SHOWNOACTIVATE : SW_HIDE);
     }

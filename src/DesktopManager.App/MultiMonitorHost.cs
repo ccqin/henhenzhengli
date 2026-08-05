@@ -104,7 +104,6 @@ public sealed class MultiMonitorHost
 
             // M4-T2：壁纸窗伴生（Z-order 由 BottomPair 统一编排）。
             var wp = new WallpaperWindow(m);
-            wp.Host = this;
             _wallpaperWindows[m.PersistentId] = wp;
             wp.Show();
             ApplyWallpaperTo(m.PersistentId);
@@ -209,24 +208,36 @@ public sealed class MultiMonitorHost
         RequestSave();
     }
 
-    /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null（隐藏）。</summary>
-    private WallpaperConfig? ResolveWallpaper(string monitorId)
+    /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null（隐藏）。返回命中组供画布计算。</summary>
+    private (WallpaperConfig? Cfg, DisplayGroup? Group) ResolveWallpaper(string monitorId)
     {
         var g = _displayGroups.FirstOrDefault(g =>
             !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(monitorId));
         if (g is not null)
-            return new WallpaperConfig { MonitorId = monitorId, Kind = g.WallpaperKind, Path = g.WallpaperPath };
-        return _wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+            return (new WallpaperConfig { MonitorId = monitorId, Kind = g.WallpaperKind, Path = g.WallpaperPath }, g);
+        return (_wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal)), null);
     }
 
     /// <summary>M4：把配置里的壁纸应用到指定屏窗口（无配置 → 窗口隐藏，系统壁纸透出）。</summary>
     private void ApplyWallpaperTo(string monitorId)
     {
         if (!_wallpaperWindows.TryGetValue(monitorId, out var wp)) return;
-        var cfg = ResolveWallpaper(monitorId);
-        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path}（独立 {N} 条 + 组 {G} 个）",
-            monitorId, cfg is not null, cfg?.Path ?? "(null)", _wallpapers.Count, _displayGroups.Count);
-        wp.SetWallpaper(cfg);
+        var (cfg, group) = ResolveWallpaper(monitorId);
+
+        // M5-T3：组模式虚拟画布 = 组内在线成员 rect 的 bounding box；在线成员 <2 → null 降级单屏。
+        IntRect? canvas = null;
+        if (group is not null)
+        {
+            var onlineRects = MonitorEnumerator.Enumerate()
+                .Where(m => group.MonitorIds.Contains(m.PersistentId))
+                .Select(m => new IntRect(m.X, m.Y, m.X + m.Width, m.Y + m.Height))
+                .ToList();
+            if (onlineRects.Count >= 2) canvas = CrossScreenLayout.Canvas(onlineRects);
+        }
+
+        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
+            monitorId, cfg is not null, cfg?.Path ?? "(null)", canvas is not null, _wallpapers.Count, _displayGroups.Count);
+        wp.SetWallpaper(cfg, canvas);
     }
 
     /// <summary>M3-T6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换，DisplayChangeWatcher 防抖后调，UI 线程）。
@@ -320,7 +331,6 @@ public sealed class MultiMonitorHost
             win.Show();
             // M4：新屏壁纸窗伴生（插回屏的壁纸按 config 原位恢复）。
             var wp = new WallpaperWindow(m);
-            wp.Host = this;
             _wallpaperWindows[m.PersistentId] = wp;
             wp.Show();
             ApplyWallpaperTo(m.PersistentId);

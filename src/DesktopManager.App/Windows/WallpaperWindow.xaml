@@ -3,13 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WallpaperWindow" WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" ShowActivated="False" Background="Black">
-    <!-- M4：壁纸内容层。静态图/GIF 帧走 Image；视频走 MediaElement（互斥显隐）。
-         本窗口刻意**不开 AllowsTransparency**：① MediaElement 在透明窗内不渲染（WPF 硬约束）；
-         ② 无壁纸时靠 Visibility=Hidden 让系统壁纸透出，不靠透明。 -->
-    <Grid>
-        <Image x:Name="WallpaperImage" Stretch="UniformToFill"/>
-        <MediaElement x:Name="WallpaperVideo" Stretch="UniformToFill" Visibility="Collapsed"
-                      LoadedBehavior="Manual" UnloadedBehavior="Manual" Volume="0"
-                      IsHitTestVisible="False" ScrubbingEnabled="False"/>
-    </Grid>
+    <!-- M4/M5：壁纸内容层。根 Canvas + ClipToBounds：单屏模式内容铺满窗口；
+         组模式内容按虚拟画布尺寸放置并负偏移，窗口只裁出本屏区域（跨屏拼接，接缝天然对齐）。
+         不开 AllowsTransparency（MediaElement 透明窗不渲染）；无壁纸 Visibility=Hidden 透出系统壁纸。 -->
+    <Canvas x:Name="RootCanvas" ClipToBounds="True" Background="Black"/>
 </Window>
