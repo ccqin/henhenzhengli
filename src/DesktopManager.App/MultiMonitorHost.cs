@@ -133,6 +133,30 @@ public sealed class MultiMonitorHost
             _orphanFences.Count, _orphanPositions.Count);
     }
 
+    /// <summary>M4-T5：设置某屏壁纸（右键菜单入口）：更新配置 + 即时应用 + 防抖落盘。</summary>
+    public void SetWallpaper(string monitorId, string path)
+    {
+        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+        _wallpapers.Add(new WallpaperConfig
+        {
+            MonitorId = monitorId,
+            Kind = WallpaperConfig.DetectKind(path),
+            Path = path
+        });
+        ApplyWallpaperTo(monitorId);
+        RequestSave();
+        Log.Information("壁纸已设置：{Mon} ← {Path}", monitorId, path);
+    }
+
+    /// <summary>M4-T5：移除某屏壁纸（回退系统壁纸）：配置删除 + 窗口隐藏 + 落盘。</summary>
+    public void RemoveWallpaper(string monitorId)
+    {
+        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+        ApplyWallpaperTo(monitorId); // 无配置 → 窗口 Hidden
+        RequestSave();
+        Log.Information("壁纸已移除：{Mon}", monitorId);
+    }
+
     /// <summary>M4-T4：Governor 暂停所有壁纸播放（幂等，窗口内部自判）。</summary>
     public void PauseAllWallpapers()
     {

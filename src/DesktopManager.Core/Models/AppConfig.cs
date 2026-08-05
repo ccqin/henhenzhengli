@@ -30,6 +30,18 @@ public record WallpaperConfig
     public string MonitorId { get; init; } = "";
     public WallpaperKind Kind { get; init; } = WallpaperKind.Image;
     public string Path { get; init; } = "";
+
+    /// <summary>按扩展名判定 Kind（config.Kind 只做提示，加载时以文件实际为准，防用户改扩展名）。</summary>
+    public static WallpaperKind DetectKind(string path)
+    {
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".gif" => WallpaperKind.Gif,
+            ".mp4" or ".wmv" or ".avi" or ".m4v" => WallpaperKind.Video,
+            _ => WallpaperKind.Image
+        };
+    }
 }
 
 public record FenceConfig

@@ -206,6 +206,21 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var miNew = new MenuItem { Header = "新建收纳盒" };
         miNew.Click += (_, _) => CreateNewFence();
         menu.Items.Add(miNew);
+        // M4-T5：壁纸设置入口（per 本屏）。
+        var miWall = new MenuItem { Header = "更换壁纸…" };
+        miWall.Click += (_, _) =>
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "选择壁纸（图片/视频/GIF）",
+                Filter = "壁纸|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.mp4;*.wmv;*.avi;*.m4v|所有文件|*.*"
+            };
+            if (dlg.ShowDialog() == true) Host?.SetWallpaper(MonitorId, dlg.FileName);
+        };
+        menu.Items.Add(miWall);
+        var miNoWall = new MenuItem { Header = "移除壁纸" };
+        miNoWall.Click += (_, _) => Host?.RemoveWallpaper(MonitorId);
+        menu.Items.Add(miNoWall);
         return menu;
     }
 

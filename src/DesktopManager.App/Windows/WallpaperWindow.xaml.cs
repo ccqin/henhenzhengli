@@ -93,7 +93,7 @@ public partial class WallpaperWindow : Window
             return;
         }
 
-        var kind = DetectKind(config.Path);
+        var kind = WallpaperConfig.DetectKind(config.Path);
         try
         {
             switch (kind)
@@ -123,18 +123,6 @@ public partial class WallpaperWindow : Window
             Visibility = Visibility.Hidden;
             SyncNativeState();
         }
-    }
-
-    /// <summary>扩展名校正 Kind（config.Kind 只做提示）。</summary>
-    private static WallpaperKind DetectKind(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ext switch
-        {
-            ".gif" => WallpaperKind.Gif,
-            ".mp4" or ".wmv" or ".avi" or ".m4v" => WallpaperKind.Video,
-            _ => WallpaperKind.Image
-        };
     }
 
     private void ApplyImage(string path)

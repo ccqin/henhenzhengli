@@ -67,3 +67,18 @@ public class WallpaperConfigTests
         Assert.Empty(new AppConfig().Wallpapers);
     }
 }
+
+/// <summary>M4-T5：扩展名 → Kind 判定。</summary>
+public class WallpaperKindDetectionTests
+{
+    [Theory]
+    [InlineData("a.jpg", WallpaperKind.Image)]
+    [InlineData("a.PNG", WallpaperKind.Image)]
+    [InlineData("a.gif", WallpaperKind.Gif)]
+    [InlineData("a.mp4", WallpaperKind.Video)]
+    [InlineData("a.WMV", WallpaperKind.Video)]
+    [InlineData("a.avi", WallpaperKind.Video)]
+    [InlineData("a.txt", WallpaperKind.Image)]
+    public void DetectKind_Maps(string path, WallpaperKind expected)
+        => Assert.Equal(expected, WallpaperConfig.DetectKind(path));
+}
