@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DesktopManager.Native;
 
@@ -113,6 +114,46 @@ public static class WindowInterop
         GetWindowRect(progman, out var pr);
         const uint SWP_NOZORDER = 0x0004; // 保持桌面层内 Z（已在最底）
         SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOZORDER);
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
+
+    private const long WS_EX_TOPMOST = 0x00000008;
+    private static readonly HashSet<string> ShellClasses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "DV2ControlHost"
+    };
+
+    /// <summary>M5 修闪：检测自己的窗口是否浮高——Z 序（顶→底）中若存在
+    /// 「普通外部窗」（可见、非 topmost、非 shell 类）位于自己窗口**下方**，即自己浮到了普通窗口之上。
+    /// 正常底置态：普通外部窗都在自己上方，不触发。</summary>
+    public static bool DetectOwnFloating(IReadOnlyList<IntPtr> ownHwnds)
+    {
+        var order = new List<IntPtr>();
+        EnumWindows((h, _) => { order.Add(h); return true; }, IntPtr.Zero);
+        var own = new HashSet<IntPtr>(ownHwnds);
+
+        int firstOwn = order.FindIndex(h => own.Contains(h));
+        if (firstOwn < 0) return false;
+
+        for (int i = firstOwn + 1; i < order.Count; i++)
+        {
+            var h = order[i];
+            if (own.Contains(h)) continue;
+            if (!IsWindowVisible(h)) continue;
+            if ((GetExtendedStyle(h) & WS_EX_TOPMOST) != 0) continue;
+            var sb = new StringBuilder(64);
+            GetClassName(h, sb, sb.Capacity);
+            if (ShellClasses.Contains(sb.ToString())) continue;
+            return true; // 普通外部窗在自己下方 = 自己浮高
+        }
+        return false;
     }
 
     /// <summary>M4：把 <paramref name="hwnd"/> 精确插到 <paramref name="aboveHwnd"/> 正下方

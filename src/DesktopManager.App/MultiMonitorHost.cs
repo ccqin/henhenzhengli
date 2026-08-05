@@ -64,7 +64,16 @@ public sealed class MultiMonitorHost
         };
         _zWatchdog.Tick += (_, _) =>
         {
-            foreach (var mon in _windows.Keys.ToList()) BottomPair(mon);
+            // 修闪：无条件 SetWindowPos 每 2s 触发 DWM 重组合 = 屏幕周期性闪一下。
+            // 改为仅检测到浮高时才重锚（正常态零 Z 操作）。
+            var own = _windows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle)
+                .Concat(_wallpaperWindows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle))
+                .ToList();
+            if (WindowInterop.DetectOwnFloating(own))
+            {
+                Log.Information("Z 看门狗：检测到浮高，重锚底序");
+                foreach (var mon in _windows.Keys.ToList()) BottomPair(mon);
+            }
         };
         _zWatchdog.Start();
 
