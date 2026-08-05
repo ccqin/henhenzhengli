@@ -1,6 +1,6 @@
 # M4 壁纸层（单屏×每屏独立）实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 每个显示器一个壁纸播放窗口（图标层之下、桌面之上）：静态图 + 视频/GIF 无声循环；全屏应用/锁屏/电池模式自动暂停省电；右键桌面即可换壁纸（持久化到 config，按屏归属）。真机：双显示器。
 
@@ -58,51 +58,51 @@ src/DesktopManager.Tests/
 
 ### M4-T1 — Core 模型 + 决策（TDD）
 
-- [ ] `WallpaperConfig`：record { MonitorId="", Kind=Image, Path="" }；`WallpaperKind { Image, Video, Gif }`；`AppConfig` 加 `Wallpapers`（默认空）。
-- [ ] 测试（先红）`WallpaperConfigTests`：round-trip（含 Kind 枚举序列化）、**旧 JSON 无 Wallpapers 字段 → 空列表**、默认值。
-- [ ] `PlaybackDecision.ShouldPause(bool fullScreenApp, bool onBattery, bool locked) → bool`：locked → true；fullScreenApp → true；onBattery → true（MVP 三条件全暂停，粒度策略 backlog）。
-- [ ] 测试（先红）`PlaybackDecisionTests`：8 行真值表全覆盖。
-- [ ] TDD 红→绿→commit。
+- [x] `WallpaperConfig`：record { MonitorId="", Kind=Image, Path="" }；`WallpaperKind { Image, Video, Gif }`；`AppConfig` 加 `Wallpapers`（默认空）。
+- [x] 测试（先红）`WallpaperConfigTests`：round-trip（含 Kind 枚举序列化）、**旧 JSON 无 Wallpapers 字段 → 空列表**、默认值。
+- [x] `PlaybackDecision.ShouldPause(bool fullScreenApp, bool onBattery, bool locked) → bool`：locked → true；fullScreenApp → true；onBattery → true（MVP 三条件全暂停，粒度策略 backlog）。
+- [x] 测试（先红）`PlaybackDecisionTests`：8 行真值表全覆盖。
+- [x] TDD 红→绿→commit。
 
 ### M4-T2 — WallpaperWindow 每屏化 + 静态图（重构+spike）
 
-- [ ] `WindowInterop.PlaceBelow(IntPtr hwnd, IntPtr belowHwnd)`：`SetWindowPos(hwnd, belowHwnd, ...SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)`（hWndInsertAfter=belowHwnd → 本窗插到它正下方）。
-- [ ] `WallpaperWindow` 构造改 `(MonitorInfo monitor)`：全屏 rect（monitor.X/Y/Width/Height，**非工作区**——壁纸盖任务栏后面）；`MakeClickThrough` + 置底；暴露 `RepositionTo(monitor)`（M3 同款）。
-- [ ] 内容：`Image` 控件（Stretch=UniformToFill）；`SetWallpaper(WallpaperConfig?)`：null/空/文件不存在 → `Visibility=Hidden`；图片 → 加载显示 + `Visibility=Visible`。
-- [ ] host 集成：`Attach`/`RebuildToMatchTopology` 里每屏图标层窗口 Show + SendToBottom 后，建/定位壁纸窗 → `PlaceBelow(壁纸hwnd, 图标层hwnd)`；壁纸配置从 `AppConfig.Wallpapers` 按 MonitorId 分配（孤儿语义同 M3）。
-- [ ] 验收（双屏）：手动塞 config 一张图 → 两屏各自铺满（含任务栏区）、图标层在壁纸之上、点壁纸区穿透到桌面层行为正常、无壁纸的屏系统壁纸照常可见。
-- [ ] commit。
+- [x] `WindowInterop.PlaceBelow(IntPtr hwnd, IntPtr belowHwnd)`：`SetWindowPos(hwnd, belowHwnd, ...SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)`（hWndInsertAfter=belowHwnd → 本窗插到它正下方）。
+- [x] `WallpaperWindow` 构造改 `(MonitorInfo monitor)`：全屏 rect（monitor.X/Y/Width/Height，**非工作区**——壁纸盖任务栏后面）；`MakeClickThrough` + 置底；暴露 `RepositionTo(monitor)`（M3 同款）。
+- [x] 内容：`Image` 控件（Stretch=UniformToFill）；`SetWallpaper(WallpaperConfig?)`：null/空/文件不存在 → `Visibility=Hidden`；图片 → 加载显示 + `Visibility=Visible`。
+- [x] host 集成：`Attach`/`RebuildToMatchTopology` 里每屏图标层窗口 Show + SendToBottom 后，建/定位壁纸窗 → `PlaceBelow(壁纸hwnd, 图标层hwnd)`；壁纸配置从 `AppConfig.Wallpapers` 按 MonitorId 分配（孤儿语义同 M3）。
+- [x] 验收（双屏）：手动塞 config 一张图 → 两屏各自铺满（含任务栏区）、图标层在壁纸之上、点壁纸区穿透到桌面层行为正常、无壁纸的屏系统壁纸照常可见。
+- [x] commit。
 
 ### M4-T3 — 视频 + GIF（spike）
 
-- [ ] 视频：`MediaElement`（LoadedBehavior=Manual, Volume=0, Stretch=UniformToFill）；`MediaEnded → Position=0 + Play()` 循环；`SetWallpaper` 按扩展名判 Kind（.mp4/.wmv/.avi→Video；.gif→Gif；其余→Image）——Kind 以文件实际为准，config 存的 Kind 只做提示（防用户改扩展名）。
-- [ ] GIF：`GifBitmapDecoder` 读帧 + 帧元数据 Delay → `DispatcherTimer` 切 `Image.Source`；帧率钳制（delay<50ms 按 50ms，防空转）。
-- [ ] `Pause()/Resume()`：视频 MediaElement.Pause/Play；GIF timer Stop/Start；`IsPlaying` 状态供 Governor 幂等。
-- [ ] 验收（双屏）：mp4 无声循环无卡顿、gif 帧速正常、任务管理器看 CPU（视频 <5%、gif <3% 粗标，超了记 backlog）。
-- [ ] commit。
+- [x] 视频：`MediaElement`（LoadedBehavior=Manual, Volume=0, Stretch=UniformToFill）；`MediaEnded → Position=0 + Play()` 循环；`SetWallpaper` 按扩展名判 Kind（.mp4/.wmv/.avi→Video；.gif→Gif；其余→Image）——Kind 以文件实际为准，config 存的 Kind 只做提示（防用户改扩展名）。
+- [x] GIF：`GifBitmapDecoder` 读帧 + 帧元数据 Delay → `DispatcherTimer` 切 `Image.Source`；帧率钳制（delay<50ms 按 50ms，防空转）。
+- [x] `Pause()/Resume()`：视频 MediaElement.Pause/Play；GIF timer Stop/Start；`IsPlaying` 状态供 Governor 幂等。
+- [x] 验收（双屏）：mp4 无声循环无卡顿、gif 帧速正常、任务管理器看 CPU（视频 <5%、gif <3% 粗标，超了记 backlog）。
+- [x] commit。
 
 ### M4-T4 — PlaybackGovernor（TDD 决策 + spike 接线）
 
-- [ ] `PowerStatus`（Native）：`GetSystemPowerStatus` → `IsOnBattery`。
-- [ ] Governor（App）：DispatcherTimer 1.5s 轮询前台窗口（GetForegroundWindow + GetWindowRect + 类名过滤 Shell_TrayWnd/Progman/本 app 窗口）→ 覆盖整屏 = 全屏应用；订阅 `SystemEvents.PowerModeChanged`（电池变化即时响应）、`SessionSwitch`（锁屏/解锁）；状态变化 → `PlaybackDecision` → 逐屏 Pause/Resume。
-- [ ] 决策部分 T1 已测；接线 spike：事件风暴防抖（PowerMode 连发）。
-- [ ] 验收（双屏）：放全屏视频/游戏 → 壁纸视频停；Win+L 锁屏 → 停，解锁恢复；拔电源 → 停，插电恢复。
-- [ ] commit。
+- [x] `PowerStatus`（Native）：`GetSystemPowerStatus` → `IsOnBattery`。
+- [x] Governor（App）：DispatcherTimer 1.5s 轮询前台窗口（GetForegroundWindow + GetWindowRect + 类名过滤 Shell_TrayWnd/Progman/本 app 窗口）→ 覆盖整屏 = 全屏应用；订阅 `SystemEvents.PowerModeChanged`（电池变化即时响应）、`SessionSwitch`（锁屏/解锁）；状态变化 → `PlaybackDecision` → 逐屏 Pause/Resume。
+- [x] 决策部分 T1 已测；接线 spike：事件风暴防抖（PowerMode 连发）。
+- [x] 验收（双屏）：放全屏视频/游戏 → 壁纸视频停；Win+L 锁屏 → 停，解锁恢复；拔电源 → 停，插电恢复。
+- [x] commit。
 
 ### M4-T5 — 右键设置入口 + 持久化 + 重建联动
 
-- [ ] 图标层画布右键菜单加「更换壁纸…」「移除壁纸」（挂现有 BuildCanvasContextMenu）→ 通知 host（窗口暴露事件或直接调 host API，带本窗 MonitorId）。
-- [ ] host：`SetWallpaper(monitorId, path)`（OpenFileDialog 在窗口侧弹）→ 更新 `_wallpapers` 状态 + 目标窗 `SetWallpaper` + RequestSave；`RemoveWallpaper(monitorId)` 同理置空。
-- [ ] `BuildAggregatedConfig` 带上 Wallpapers（host 状态 + 离线屏孤儿壁纸配置保留）。
-- [ ] 拓扑重建：新屏按 config 恢复壁纸；离线屏壁纸进孤儿。
-- [ ] 验收（双屏）：两屏各自右键换图/换视频/移除 → 即时生效 + 重启保持；拔副屏→插回 → 副屏壁纸随窗恢复。
-- [ ] commit。
+- [x] 图标层画布右键菜单加「更换壁纸…」「移除壁纸」（挂现有 BuildCanvasContextMenu）→ 通知 host（窗口暴露事件或直接调 host API，带本窗 MonitorId）。
+- [x] host：`SetWallpaper(monitorId, path)`（OpenFileDialog 在窗口侧弹）→ 更新 `_wallpapers` 状态 + 目标窗 `SetWallpaper` + RequestSave；`RemoveWallpaper(monitorId)` 同理置空。
+- [x] `BuildAggregatedConfig` 带上 Wallpapers（host 状态 + 离线屏孤儿壁纸配置保留）。
+- [x] 拓扑重建：新屏按 config 恢复壁纸；离线屏壁纸进孤儿。
+- [x] 验收（双屏）：两屏各自右键换图/换视频/移除 → 即时生效 + 重启保持；拔副屏→插回 → 副屏壁纸随窗恢复。
+- [x] commit。
 
 ### M4-T6 — 收尾 + 冒烟 + tag
 
-- [ ] build + test 全绿。
-- [ ] 双屏冒烟：启动（无壁纸时系统壁纸正常）→ 两屏换图/视频 → 全屏/锁屏/电池暂停恢复 → 拔插屏壁纸跟随 → 重启布局+壁纸保持 → 托盘退出恢复原生桌面。
-- [ ] `git tag m4-wallpaper` + README 里程碑表更新。
+- [x] build + test 全绿。
+- [x] 双屏冒烟：启动（无壁纸时系统壁纸正常）→ 两屏换图/视频 → 全屏/锁屏/电池暂停恢复 → 拔插屏壁纸跟随 → 重启布局+壁纸保持 → 托盘退出恢复原生桌面。
+- [x] `git tag m4-wallpaper` + README 里程碑表更新。
 
 ## 风险与对策
 
