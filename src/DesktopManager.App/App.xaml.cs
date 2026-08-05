@@ -40,6 +40,24 @@ public partial class App : Application
         // P1：日志必须最先初始化——后续所有诊断（含 --restore-icons 分支）都依赖 Log.Logger。
         LogConfig.Init();
 
+        // M6.3 前置（真机需要）：全局异常落日志。此前 explorer 重启时 app 静默崩溃无任何痕迹，
+        // 无兜底无法定位。三入口全接：UI 线程 / 非 UI 线程 / Task。
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Log.Fatal(args.Exception, "UI 线程未处理异常（app 将退出）");
+            LogConfig.Shutdown();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            Log.Fatal(args.ExceptionObject as System.Exception, "非 UI 线程未处理异常（app 将退出，isTerminating={T}）", args.IsTerminating);
+            LogConfig.Shutdown();
+        };
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            Log.Error(args.Exception, "Task 未观察异常（不退出）");
+            args.SetObserved();
+        };
+
         // C1（I-3 致命项）：--restore-icons 模式。RunOnce 触发的崩溃恢复路径。
         // 最早期检测（在 tray/window 创建之前）：调 RestoreExplorer（= ShowDesktopIcons，含 WM_SETTINGCHANGE 广播）
         // → HideIcons=0 且广播刷新 explorer → 桌面图标恢复 → Shutdown 退出。
