@@ -34,7 +34,8 @@ public static class ArrangementPlanner
         // 2. 重叠推开：沿穿透较浅的轴推回（穿透 = 重叠深度）
         foreach (var o in others)
         {
-            while (r.IntersectArea(o) > 0)
+            // 防御上限：正常 1 次即推开，上限防异常输入死循环
+            for (int guard = 0; guard < 8 && r.IntersectArea(o) > 0; guard++)
             {
                 int pushLeft = r.Right - o.Left;    // 把 r 推到 o 左边
                 int pushRight = o.Right - r.Left;   // 把 r 推到 o 右边

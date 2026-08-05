@@ -79,6 +79,7 @@ public partial class App : Application
                 Log.Information("--debug-monitors: {Device} {PersistentId} ({X},{Y} {W}x{H}) primary={P}",
                     m.DeviceName, m.PersistentId, m.X, m.Y, m.Width, m.Height, m.IsPrimary);
             }
+            Log.Information("--debug-monitors 拓扑诊断: {Diag}", DesktopManager.Native.DisplayTopologyApplier.Diagnose());
             Shutdown();
             return;
         }
