@@ -26,6 +26,7 @@ public partial class App : Application
     private DesktopSync? _sync;
     private ShellRestartWatcher? _shellWatcher;
     private DisplayChangeWatcher? _displayWatcher;
+    private PlaybackGovernor? _governor;
 
     /// <summary>T7 配置文件路径：%AppData%\DesktopManager\config.json（与 I-3 RunOnce 同属用户级状态目录）。</summary>
     private static string GetConfigPath()
@@ -197,6 +198,9 @@ public partial class App : Application
                 }
             }));
             _displayWatcher.Attach();
+
+            // 6. M4-T4：播放治理（全屏/电池/锁屏暂停壁纸）。
+            _governor = new PlaybackGovernor(_host);
         }
         catch
         {
@@ -222,6 +226,7 @@ public partial class App : Application
 
         _sync?.Dispose();
         _displayWatcher?.Dispose();
+        _governor?.Dispose();
         _host?.CloseAll(); // 关所有图标层窗口（恢复原生桌面前）
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。

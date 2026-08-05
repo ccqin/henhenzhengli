@@ -133,6 +133,18 @@ public sealed class MultiMonitorHost
             _orphanFences.Count, _orphanPositions.Count);
     }
 
+    /// <summary>M4-T4：Governor 暂停所有壁纸播放（幂等，窗口内部自判）。</summary>
+    public void PauseAllWallpapers()
+    {
+        foreach (var wp in _wallpaperWindows.Values) wp.Pause();
+    }
+
+    /// <summary>M4-T4：Governor 恢复所有壁纸播放（幂等）。</summary>
+    public void ResumeAllWallpapers()
+    {
+        foreach (var wp in _wallpaperWindows.Values) wp.Resume();
+    }
+
     /// <summary>M4：Z-order 编排——图标层置底，壁纸窗精确插到它正下方。
     /// 所有置底时机（图标层 ContentRendered/Activated/SourceInitialized 经 RequestBottom）都走这里，
     /// 杜绝两窗各自 SendToBottom 互踩。</summary>
