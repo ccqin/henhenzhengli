@@ -13,6 +13,7 @@ public sealed class IconItem : INotifyPropertyChanged
     private string _displayName;
     private double _x;
     private double _y;
+    private bool _isSelected;
 
     public IconItem(string filePath, string displayName, double x = 0, double y = 0)
     {
@@ -44,6 +45,13 @@ public sealed class IconItem : INotifyPropertyChanged
     {
         get => _y;
         set => Set(ref _y, value);
+    }
+
+    /// <summary>选中高亮（UI 态，不序列化）：单击选中，点空白清除。</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => Set(ref _isSelected, value);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -1,6 +1,9 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using DesktopManager.Core.Models;
 using DesktopManager.Native;
@@ -10,6 +13,18 @@ namespace DesktopManager.App.Windows;
 /// <summary>M5-T2（M5-T5 修订）：设置窗口（单实例，托盘入口）。
 /// 左：屏幕排列只读预览（等比矩形；拖拽改拓扑功能因本机显示栈拒绝第三方变更而移除）。
 /// 右：显示组管理（组内屏共享壁纸）+ 每屏独立壁纸设置（原桌面右键入口收归此处）。</summary>
+
+public class MonitorVm
+{
+    public string PersistentId { get; set; }
+    public string Name { get; set; }
+    public string Resolution { get; set; }
+    public bool IsGroup { get; set; }
+    public string GroupName { get; set; }
+    public string StatusText { get; set; }
+    public string StatusIcon { get; set; }
+}
+
 public partial class SettingsWindow : Window
 {
     private readonly MultiMonitorHost _host;
@@ -32,9 +47,34 @@ public partial class SettingsWindow : Window
         _host = host;
         InitializeComponent();
         _groups = host.Groups.ToList();
+        var v = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
+        VersionText.Text = v is null ? "" : $"v{v.Major}.{v.Minor}.{v.Build}";
         RefreshMonitors();
         RefreshGroupsUI();
         RefreshMonitorList();
+    }
+
+    // ---------- title bar / nav ----------
+
+    private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.LeftButton == MouseButtonState.Pressed) DragMove();
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void RefreshMonitors_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshMonitors();
+        RefreshMonitorList();
+    }
+
+    private void Nav_Checked(object sender, RoutedEventArgs e)
+    {
+        if (PanelArrange is null || PanelGroups is null || PanelMonitors is null) return;
+        PanelArrange.Visibility = ReferenceEquals(sender, NavArrange) ? Visibility.Visible : Visibility.Collapsed;
+        PanelGroups.Visibility = ReferenceEquals(sender, NavGroups) ? Visibility.Visible : Visibility.Collapsed;
+        PanelMonitors.Visibility = ReferenceEquals(sender, NavMonitors) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ---------- 排列预览（只读） ----------
@@ -99,16 +139,86 @@ public partial class SettingsWindow : Window
             els.Rect.Height = r.Height * _scale;
             Canvas.SetLeft(els.Rect, (r.Left - _virtL) * _scale + _offX);
             Canvas.SetTop(els.Rect, (r.Top - _virtT) * _scale + _offY);
-            els.Label.Text = $"{ShortName(m.PersistentId)}{(m.IsPrimary ? " ★" : "")}\n{r.Width}x{r.Height}";
-            Canvas.SetLeft(els.Label, (r.Left - _virtL) * _scale + _offX + 6);
-            Canvas.SetTop(els.Label, (r.Top - _virtT) * _scale + _offY + 6);
+
+            var cfg = _host.GetEffectiveWallpaper(m.PersistentId);
+            Brush fill = null;
+            string wallTag = "";
+
+            if (cfg != null)
+            {
+                var group = _host.Groups.FirstOrDefault(g => 
+                    !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(m.PersistentId));
+                
+                if (group != null && File.Exists(group.WallpaperPath))
+                {
+                    var groupMonitors = _monitors.Where(gm => group.MonitorIds.Contains(gm.PersistentId)).ToList();
+                    double gMinX = groupMonitors.Min(gm => gm.X);
+                    double gMinY = groupMonitors.Min(gm => gm.Y);
+                    double gMaxX = groupMonitors.Max(gm => gm.X + gm.Width);
+                    double gMaxY = groupMonitors.Max(gm => gm.Y + gm.Height);
+                    double gW = gMaxX - gMinX;
+                    double gH = gMaxY - gMinY;
+
+                    if (gW > 0 && gH > 0)
+                    {
+                        try
+                        {
+                            var bmp = new BitmapImage();
+                            bmp.BeginInit();
+                            bmp.UriSource = new Uri(group.WallpaperPath);
+                            bmp.DecodePixelWidth = 800;
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                            bmp.Freeze();
+
+                            double relX = (m.X - gMinX) / gW;
+                            double relY = (m.Y - gMinY) / gH;
+                            double relW = m.Width / gW;
+                            double relH = m.Height / gH;
+
+                            fill = new ImageBrush(bmp)
+                            {
+                                Stretch = Stretch.Fill,
+                                ViewboxUnits = BrushMappingMode.RelativeToBoundingBox,
+                                Viewbox = new Rect(relX, relY, relW, relH)
+                            };
+                            wallTag = "\n\u25cf \u7ec4\u58c1\u7eb8";
+                        }
+                        catch { }
+                    }
+                }
+                
+                if (fill == null)
+                {
+                    fill = ThumbnailBrush(cfg);
+                    wallTag = cfg.Kind == WallpaperKind.Video ? "\n\u25b6 \u89c6\u9891" : "\n\u25cf \u72ec\u7acb\u58c1\u7eb8";
+                }
+            }
+            
+            els.Rect.Fill = fill ?? new SolidColorBrush(Color.FromRgb(0x2E, 0x3A, 0x5E));
+            els.Label.Text = $"{ShortName(m.PersistentId)}{(m.IsPrimary ? " \u2605" : "")}\n{r.Width}x{r.Height}{wallTag}";
         }
     }
 
-    private void RefreshMonitors_Click(object sender, RoutedEventArgs e)
+    /// <summary>壁纸缩略图画刷：图片/GIF 首帧解码 300px 宽；视频/无/失败返回 null（调用方占位）。</summary>
+    private static Brush? ThumbnailBrush(WallpaperConfig? cfg)
     {
-        RefreshMonitors();
-        RefreshMonitorList();
+        if (cfg is null || cfg.Kind == WallpaperKind.Video || !File.Exists(cfg.Path)) return null;
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(cfg.Path);
+            bmp.DecodePixelWidth = 300;
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            return new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string ShortName(string persistentId)
@@ -122,28 +232,43 @@ public partial class SettingsWindow : Window
     private void RefreshMonitorList()
     {
         _suppressEvents = true;
-        MonitorList.ItemsSource = _monitors
-            .Select(m => $"{ShortName(m.PersistentId)}（{m.Width}x{m.Height}）— {MonitorWallpaperText(m.PersistentId)}")
-            .ToList();
-        var idx = _monitors.FindIndex(m => m.PersistentId == _selectedMonitor);
-        MonitorList.SelectedIndex = idx >= 0 ? idx : (_monitors.Count > 0 ? 0 : -1);
+        var vms = _monitors.Select(m => {
+            var cfg = _host.GetEffectiveWallpaper(m.PersistentId);
+            var vm = new MonitorVm {
+                PersistentId = m.PersistentId,
+                Name = ShortName(m.PersistentId),
+                Resolution = m.Width + "x" + m.Height
+            };
+            if (cfg != null) {
+                var g = _host.Groups.FirstOrDefault(gx => !string.IsNullOrWhiteSpace(gx.WallpaperPath) && gx.MonitorIds.Contains(m.PersistentId));
+                if (g != null) {
+                    vm.IsGroup = true;
+                    vm.GroupName = g.Name;
+                    vm.StatusText = "组 \"" + g.Name + "\"";
+                    vm.StatusIcon = "";
+                } else {
+                    vm.IsGroup = false;
+                    vm.StatusText = cfg.Kind == WallpaperKind.Video ? "独立 (视频)" : "独立 (图片)";
+                    vm.StatusIcon = "";
+                }
+            } else {
+                vm.IsGroup = false;
+                vm.StatusText = "未设置";
+                vm.StatusIcon = "";
+            }
+            return vm;
+        }).ToList();
+        MonitorList.ItemsSource = vms;
+        var idx = vms.FindIndex(v => v.PersistentId == _selectedMonitor);
+        MonitorList.SelectedIndex = idx >= 0 ? idx : (vms.Count > 0 ? 0 : -1);
         _suppressEvents = false;
-    }
-
-    private string MonitorWallpaperText(string monId)
-    {
-        var g = _host.Groups.FirstOrDefault(g =>
-            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(monId));
-        if (g is not null) return $"组「{g.Name}」壁纸";
-        return "(独立，未设置)";
     }
 
     private void MonitorList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;
-        _selectedMonitor = MonitorList.SelectedIndex >= 0 && MonitorList.SelectedIndex < _monitors.Count
-            ? _monitors[MonitorList.SelectedIndex].PersistentId
-            : null;
+        var vm = MonitorList.SelectedItem as MonitorVm;
+        _selectedMonitor = vm?.PersistentId;
     }
 
     private void SetMonitorWallpaper_Click(object sender, RoutedEventArgs e)

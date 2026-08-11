@@ -253,6 +253,25 @@ public sealed class MultiMonitorHost
     /// <summary>M5：显示组只读视图（设置窗口用）。</summary>
     public IReadOnlyList<DisplayGroup> Groups => _displayGroups;
 
+    /// <summary>M5-UI：某屏生效壁纸（组优先 > 独立 > null），设置窗口预览缩略图用。</summary>
+    public WallpaperConfig? GetEffectiveWallpaper(string monitorId) => ResolveWallpaper(monitorId).Cfg;
+
+    /// <summary>M5-UI：全局清除所有屏幕的选中态（跨屏单选核心）。</summary>
+    public void ClearAllSelection()
+    {
+        try
+        {
+            foreach (var win in _windows.Values)
+            {
+                win?.ClearLocalSelection();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ClearAllSelection error: {ex.Message}");
+        }
+    }
+
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
     {

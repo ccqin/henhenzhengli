@@ -709,6 +709,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 点散落图标（StackPanel 内 Image/TextBlock，根 StackPanel Background=Transparent 命中）或 FenceControl 子元素时
         // OriginalSource 是这些子元素而非 Canvas，不触发本逻辑（交给散落 Preview 双击 Open / 盒子交互）。
         if (!ReferenceEquals(e.OriginalSource, IconCanvas)) return;
+        ClearAllSelection(); // M5-UI：点空白清除选中
         // R4：切窗口级 IconVisibility DP。散落图标 DataTemplate.Visibility 绑它 → 所有散落项自动同步显隐。
         IconVisibility = IconVisibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         var vis = IconVisibility;
@@ -759,6 +760,40 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _iconDragArmed = true;
         _draggedIcon = icon; // R2：IconItem 数据引用，非 UI 容器
         _iconDragOrigin = e.GetPosition(this);
+        SelectLoose(icon); // M5-UI：单击选中高亮
+    }
+
+    /// <summary>M5-UI：单选高亮（先全局清除，再选中自己）。</summary>
+    private void SelectLoose(IconItem icon)
+    {
+        // 先全局清除所有屏幕的选中
+        Host?.ClearAllSelection();
+        // 再选中当前图标
+        icon.IsSelected = true;
+    }
+
+    /// <summary>M5-UI：清除全部选中态（跨屏单选：通过 Host 全局清除）。</summary>
+    public void ClearAllSelection()
+    {
+        Host?.ClearAllSelection();
+    }
+
+    /// <summary>M5-UI：清除本屏幕的选中态（散落 + 收纳盒）。</summary>
+    public void ClearLocalSelection()
+    {
+        // 清除散落图标选中
+        foreach (var i in _looseIcons)
+        {
+            if (i.IsSelected)
+            {
+                i.IsSelected = false;
+            }
+        }
+        // 清除所有收纳盒的选中
+        foreach (var f in _fences)
+        {
+            f.ClearIconSelection();
+        }
     }
 
     /// <summary>review-finding 2：单击松手未移动 → 清 armed（防 armed 残留到下次 down 叠加误触）。三守卫之二。</summary>

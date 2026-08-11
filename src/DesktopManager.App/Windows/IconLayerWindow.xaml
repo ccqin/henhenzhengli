@@ -1,4 +1,4 @@
-<Window x:Class="DesktopManager.App.Windows.IconLayerWindow"
+﻿<Window x:Class="DesktopManager.App.Windows.IconLayerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
@@ -48,8 +48,18 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Width="80"
-                                Background="Transparent"
                                 Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Style.Triggers>
+                                    <!-- M5-UI：单击选中高亮（Win11 桌面选中色感） -->
+                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Background" Value="#4066CCFF"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
                         <Image Width="32" Height="32" Stretch="Uniform"
                                Source="{Binding FilePath, Converter={StaticResource FilePathToIconConverter}}"/>
                         <TextBlock Text="{Binding DisplayName}"

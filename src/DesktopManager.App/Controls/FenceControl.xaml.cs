@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -21,6 +22,8 @@ public partial class FenceControl : UserControl
     private bool _folded;
     private bool _isEditing;
     private bool _isDragging;
+    private StackPanel? _selectedIconPanel; // M5-UI：盒内图标单选高亮
+    private static readonly SolidColorBrush SelectedBrush = new(Color.FromArgb(0x40, 0x66, 0xCC, 0xFF));
     private Point _dragOrigin;     // 按下时鼠标相对父 Canvas 的位置
     private double _startLeft;     // 按下时控件在父 Canvas 的 Left
     private double _startTop;      // 按下时控件在父 Canvas 的 Top
@@ -55,6 +58,12 @@ public partial class FenceControl : UserControl
     public FenceControl()
     {
         InitializeComponent();
+        // M5-UI：点盒子空白清除盒内选中（图标 panel 已 Handled，不会误触）。
+        MouseLeftButtonDown += (_, _) => {
+                ClearIconSelection();
+                var host = Window.GetWindow(this) as IconLayerWindow;
+                host?.ClearAllSelection();
+            };
     }
 
     /// <summary>把 FenceConfig 映射到 UI（标题/折叠态/尺寸 W/H）。
@@ -99,6 +108,7 @@ public partial class FenceControl : UserControl
     /// 宿主在加载阶段自己初始化 _fencedPaths，不依赖事件回调。路径应已由宿主用 IconPathFilter 过滤容错。</summary>
     public void LoadIcons(IEnumerable<string> filePaths)
     {
+        ClearIconSelection();
         foreach (var filePath in filePaths)
         {
             if (string.IsNullOrEmpty(filePath)) continue;
@@ -117,6 +127,7 @@ public partial class FenceControl : UserControl
     /// 去重；渲染小图标项 + 维护 _config.IconFilePaths + 触发 IconAdded。</summary>
     public void AddIcon(string filePath)
     {
+        ClearIconSelection();
         if (string.IsNullOrEmpty(filePath)) return;
         if (_contentIcons.ContainsKey(filePath)) return; // 已归属，去重
         var element = BuildContentIcon(filePath);
@@ -141,6 +152,7 @@ public partial class FenceControl : UserControl
     ///（此时新 owner Fence 仍拥有该 path，_fencedPaths 必须保留它）。否则会错误丢失归属。</summary>
     public void RemoveIconSilent(string filePath)
     {
+        ClearIconSelection();
         if (!_contentIcons.TryGetValue(filePath, out var element)) return;
         ContentArea.Children.Remove(element);
         _contentIcons.Remove(filePath);
@@ -197,9 +209,21 @@ public partial class FenceControl : UserControl
         // 拖出逻辑：挂 panel（与散落图标对称），左键按下 arm；MouseMove 超阈值 → DoDragDrop（data=FilePath）。
         panel.MouseLeftButtonDown += (_, e) =>
         {
+            // M5-UI 修：双击打开（原先 Handled=true 吞掉双击，盒内图标双击无反应）。
+            if (e.ClickCount >= 2)
+            {
+                _contentDragArmed = false;
+                _contentDragPath = null;
+                Open(filePath);
+                e.Handled = true;
+                return;
+            }
             _contentDragArmed = true;
             _contentDragPath = filePath;
             _contentDragOrigin = e.GetPosition(this);
+            // 跨区单选：先清散落图标选中（及本盒旧选中），再高亮本图标
+            (Window.GetWindow(this) as IconLayerWindow)?.ClearAllSelection();
+            SelectIcon(panel);
             e.Handled = true;
         };
         panel.MouseMove += (_, e) =>
@@ -227,6 +251,29 @@ public partial class FenceControl : UserControl
             _contentDragPath = null;
         };
         return panel;
+    }
+
+    // ---------- M5-UI：盒内图标选中 ----------
+
+    private void SelectIcon(StackPanel panel)
+    {
+        if (_selectedIconPanel is not null && !ReferenceEquals(_selectedIconPanel, panel))
+            _selectedIconPanel.Background = Brushes.Transparent;
+        _selectedIconPanel = panel;
+        panel.Background = SelectedBrush;
+    }
+
+    /// <summary>清除盒内图标选中态（点盒子空白/图标增删时调）。</summary>
+    public void ClearIconSelection()
+    {
+        if (_selectedIconPanel is not null) _selectedIconPanel.Background = Brushes.Transparent;
+        _selectedIconPanel = null;
+    }
+
+    private static void Open(string path)
+    {
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch { /* 与 IconLayerWindow.Open 同：失败静默（M1 遗留语义） */ }
     }
 
     // ---------- T3：拖入接收（UserControl 根 Drop） ----------
