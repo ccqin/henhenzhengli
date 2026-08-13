@@ -24,14 +24,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
 
-    private const uint MOD_WIN = 0x0008;
-    private const uint VK_D = 0x44;
-    public const int WM_HOTKEY = 0x0312;
     
-    [DllImport("user32.dll")]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-    [DllImport("user32.dll")]
-    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     private const int WS_EX_NOACTIVATE = 0x08000000;
 
@@ -54,7 +47,6 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private IntPtr _hwnd;
     private long _noActivatePrevEx; // EnableActivation 返回值，EndInput 用其恢复
     private bool _inputActive;
-    private DispatcherTimer? _keepVisibleTimer;      // 防 BeginInput 重入（如多次进入编辑未退出）导致 prevEx 被覆盖
 
     // ---------- M3-T3/T4：多屏化 ----------
     // 窗口与显示器 1:1：构造接收显示器信息（定位用工作区 + 持久 ID）与本屏 Fence/位置子集（host 按归属切分）。
@@ -165,18 +157,6 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // 双重保障：① ContentRendered（窗口已可见）后再置底一次；
             // ② Activated 守卫：非输入态被意外激活（Alt+Tab/其他路径）立即压回底部。
             ContentRendered += (_, _) => AskBottom();
-            
-            // 拦截 WM_HOTKEY 消息
-            var source = HwndSource.FromHwnd(_hwnd);
-            source?.AddHook((hwnd, msg, wParam, lParam, ref handled) =>
-            {
-                if (msg == WM_HOTKEY)
-                {
-                    // Win+D 被拦截：不做任何事（我们的桌面已经显示）
-                    handled = true;
-                }
-                return IntPtr.Zero;
-            });
             Activated += (_, _) =>
             {
                 if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底

@@ -18,13 +18,13 @@ namespace DesktopManager.App.Windows;
 
 public class MonitorVm
 {
-    public string PersistentId { get; set; }
-    public string Name { get; set; }
-    public string Resolution { get; set; }
+    public string PersistentId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Resolution { get; set; } = "";
     public bool IsGroup { get; set; }
-    public string GroupName { get; set; }
-    public string StatusText { get; set; }
-    public string StatusIcon { get; set; }
+    public string GroupName { get; set; } = "";
+    public string StatusText { get; set; } = "";
+    public string StatusIcon { get; set; } = "";
 }
 
 public partial class SettingsWindow : Window
