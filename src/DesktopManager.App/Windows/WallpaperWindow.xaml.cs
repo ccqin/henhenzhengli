@@ -19,6 +19,20 @@ namespace DesktopManager.App.Windows;
 /// Z-order/可见性 Win32 兜底见 SyncNativeState；host 看门狗重锚底序。</summary>
 public partial class WallpaperWindow : Window
 {
+    // Win32 常量和 P/Invoke
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
+
+    private const int WM_SHOWWINDOW = 0x0018;
+
+    
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
     private readonly string _monitorId;
     private IntPtr _hwnd;
     private (int X, int Y, int W, int H) _monRect;
@@ -78,10 +92,20 @@ public partial class WallpaperWindow : Window
         RootCanvas.Children.Add(_video);
         // 整屏但底部留 2px 缝（M4 真机教训：破 shell 全屏检测）。
         Left = monitor.X; Top = monitor.Y; Width = monitor.Width; Height = monitor.Height - 2;
-        SourceInitialized += (_, _) =>
+                SourceInitialized += (_, _) =>
         {
             _hwnd = new WindowInteropHelper(this).Handle;
+            
+            // WS_EX_TOOLWINDOW：不在任务栏显示
+            int exStyle = GetWindowLong(_hwnd, GWL_EXSTYLE);
+            exStyle |= WS_EX_TOOLWINDOW;
+            SetWindowLong(_hwnd, GWL_EXSTYLE, exStyle);
+            
             WindowInterop.MakeClickThrough(_hwnd);
+            
+            // 在 MakeClickThrough 后补 TOOLWINDOW（MakeClickThrough 覆盖了 ex style）
+            var ex = WindowInterop.GetExtendedStyle(_hwnd);
+            WindowInterop.SetExtendedStyle(_hwnd, ex | 0x00000080);
         };
         _video.MediaEnded += (_, _) =>
         {

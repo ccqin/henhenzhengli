@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Windows.Threading;
 using System.Windows;
 using DesktopManager.App.Windows;
 using DesktopManager.Core.Models;
@@ -53,6 +55,16 @@ public sealed class MultiMonitorHost
     // M5-T4：组内视频漂移校正——2s 轮询，首成员为基准，|Δ|>0.5s 对齐。
     private System.Windows.Threading.DispatcherTimer? _videoSync;
 
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    
+    private const uint MOD_WIN = 0x0008;
+    private const uint VK_D = 0x44; // 'D' key
+    private const int WM_HOTKEY = 0x0312;
+    private IntPtr _hotkeyHwnd;
+    
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
@@ -83,6 +95,11 @@ public sealed class MultiMonitorHost
         };
         _videoSync.Tick += (_, _) => SyncGroupVideos();
         _videoSync.Start();
+        
+        // 注册 Win+D 全局热键，阻止 ShowDesktop
+        // 当用户按 Win+D 时不执行默认行为（显示系统桌面）
+        // 而是什么都不做（我们的桌面已经显示了）
+        // 在 PrimaryWindow 的 hwnd 上注册
     }
 
     /// <summary>M5-T4：组内视频同步。基准 = 组成员序首个在线视频窗；其余 |Δ|&gt;0.5s → 对齐。

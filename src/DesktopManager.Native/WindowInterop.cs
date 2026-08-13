@@ -26,9 +26,9 @@ public static class WindowInterop
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+    public static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
     [DllImport("user32.dll")]
-    private static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+    public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT2 r);
 
@@ -154,6 +154,74 @@ public static class WindowInterop
             return true; // 普通外部窗在自己下方 = 自己浮高
         }
         return false;
+    }
+
+    // ---------- Lively 方案：SetupDesktopLayer + AttachToDesktop ----------
+    // 向 Progman 发送 0x052C 创建 WorkerW，找到壁纸 WorkerW，把壁纸窗 SetParent 到它下面。
+    // 成为桌面子窗口后，Win+D 不会影响（只最小化顶层窗口）。
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string? lpszWindow);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    private const uint SMTO_NORMAL = 0x0000;
+
+    /// <summary>向 Progman 发送 0x052C 创建 WorkerW，返回壁纸 WorkerW 的 hwnd。</summary>
+    public static IntPtr SetupDesktopLayer()
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return IntPtr.Zero;
+
+        // 发送 0x052C 让 Progman 创建 WorkerW
+        SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
+
+        // 找到包含 SHELLDLL_DefView 的窗口，取其兄弟 WorkerW
+        IntPtr workerW = IntPtr.Zero;
+        IntPtr shellDefView = IntPtr.Zero;
+
+        EnumWindows((tophandle, _) =>
+        {
+            IntPtr p = FindWindowEx(tophandle, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (p != IntPtr.Zero)
+            {
+                workerW = FindWindowEx(IntPtr.Zero, tophandle, "WorkerW", null);
+                shellDefView = p;
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        // Win11 raised desktop：WorkerW 可能在 Progman 下面
+        if (workerW == IntPtr.Zero)
+        {
+            workerW = FindWindowEx(progman, IntPtr.Zero, "WorkerW", null);
+        }
+
+        return workerW != IntPtr.Zero ? workerW : progman;
+    }
+
+    /// <summary>把壁纸窗口 SetParent 到 WorkerW/Progman，成为桌面子窗口。
+    /// 参考 Lively 的 TryAttachToDesktop：设置 WS_CHILD 样式后 SetParent。</summary>
+    public static void AttachToDesktop(IntPtr hwnd, IntPtr desktopParent)
+    {
+        // 设置 WS_CHILD 样式（去 WS_POPUP）
+        long style = GetWindowLongStyle(hwnd);
+        style = (style & ~WS_POPUP) | WS_CHILD;
+        SetWindowLongStyle(hwnd, style);
+
+        // SetParent 到 WorkerW/Progman
+        SetParent(hwnd, desktopParent);
+    }
+
+    private static long GetWindowLongStyle(IntPtr hWnd)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64() : GetWindowLong32(hWnd, GWL_STYLE);
+
+    private static void SetWindowLongStyle(IntPtr hWnd, long value)
+    {
+        if (IntPtr.Size == 8) SetWindowLongPtr64(hWnd, GWL_STYLE, new IntPtr(value));
+        else SetWindowLong32(hWnd, GWL_STYLE, (int)value);
     }
 
     /// <summary>M4：把 <paramref name="hwnd"/> 精确插到 <paramref name="aboveHwnd"/> 正下方

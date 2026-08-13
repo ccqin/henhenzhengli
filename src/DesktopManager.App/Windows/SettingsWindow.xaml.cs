@@ -1,7 +1,9 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
@@ -27,6 +29,21 @@ public class MonitorVm
 
 public partial class SettingsWindow : Window
 {
+    // Win32 常量和 P/Invoke
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    private const int WM_SYSCOMMAND = 0x0112;
+    private const int SC_MINIMIZE = 0xF020;
+    private const int WM_SHOWWINDOW = 0x0018;
+
+    
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+    
+    [DllImport("user32.dll")]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
     private readonly MultiMonitorHost _host;
     private List<DisplayGroup> _groups;
     private List<MonitorInfo> _monitors = new();
@@ -52,6 +69,14 @@ public partial class SettingsWindow : Window
         RefreshMonitors();
         RefreshGroupsUI();
         RefreshMonitorList();
+        
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            exStyle |= WS_EX_TOOLWINDOW;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+        };
     }
 
     // ---------- title bar / nav ----------
@@ -67,6 +92,16 @@ public partial class SettingsWindow : Window
     {
         RefreshMonitors();
         RefreshMonitorList();
+        
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            exStyle |= WS_EX_TOOLWINDOW;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            
+            // 添加消息钩子，拦截 Win+D
+        };
     }
 
     private void Nav_Checked(object sender, RoutedEventArgs e)
@@ -282,6 +317,16 @@ public partial class SettingsWindow : Window
         if (dlg.ShowDialog() != true) return;
         _host.SetWallpaper(_selectedMonitor, dlg.FileName);
         RefreshMonitorList();
+        
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            exStyle |= WS_EX_TOOLWINDOW;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            
+            // 添加消息钩子，拦截 Win+D
+        };
     }
 
     private void RemoveMonitorWallpaper_Click(object sender, RoutedEventArgs e)
@@ -289,6 +334,16 @@ public partial class SettingsWindow : Window
         if (_selectedMonitor is null) return;
         _host.RemoveWallpaper(_selectedMonitor);
         RefreshMonitorList();
+        
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            exStyle |= WS_EX_TOOLWINDOW;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            
+            // 添加消息钩子，拦截 Win+D
+        };
     }
 
     // ---------- 显示组管理 ----------

@@ -1,3 +1,4 @@
+using DesktopManager.Native;
 using System.Windows;
 using System.Windows.Interop;
 using Serilog;
@@ -28,6 +29,11 @@ public sealed class DisplayChangeWatcher : IDisposable
         p.SetPosition(-32000, -32000);
         _source = new HwndSource(p);
         _source.AddHook(WndProc);
+        
+        // 隐藏窗口：不在任务栏显示 + 不在 Alt+Tab 显示
+        var hwnd = _source.Handle;
+        var ex = WindowInterop.GetExtendedStyle(hwnd);
+        WindowInterop.SetExtendedStyle(hwnd, ex | 0x00000080); // WS_EX_TOOLWINDOW
         _debounce = new System.Threading.Timer(_ =>
         {
             // Timer 在 ThreadPool 触发 → 回 UI 线程（host 重建窗口必须 UI 线程）。
