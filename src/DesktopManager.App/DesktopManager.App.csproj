@@ -5,6 +5,7 @@
     <ProjectReference Include="..\DesktopManager.Native\DesktopManager.Native.csproj" />
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
     <ProjectReference Include="..\DesktopManager.Player.Wallpaper\DesktopManager.Player.Wallpaper.csproj" />
+    <ProjectReference Include="..\DesktopManager.Player.Icons\DesktopManager.Player.Icons.csproj" />
   </ItemGroup>
 
   <ItemGroup>

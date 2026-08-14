@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -176,7 +176,7 @@ public partial class SettingsWindow : Window
             Canvas.SetTop(els.Rect, (r.Top - _virtT) * _scale + _offY);
 
             var cfg = _host.GetEffectiveWallpaper(m.PersistentId);
-            Brush fill = null;
+            Brush? fill = null;
             string wallTag = "";
 
             if (cfg != null)
@@ -225,7 +225,7 @@ public partial class SettingsWindow : Window
                 
                 if (fill == null)
                 {
-                    fill = ThumbnailBrush(cfg);
+                    fill = ThumbnailBrush(cfg!);
                     wallTag = cfg.Kind == WallpaperKind.Video ? "\n\u25b6 \u89c6\u9891" : "\n\u25cf \u72ec\u7acb\u58c1\u7eb8";
                 }
             }
