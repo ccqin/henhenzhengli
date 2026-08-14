@@ -1,9 +1,12 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 using System.Windows;
+using DesktopManager.App.Services;
 using DesktopManager.App.Windows;
 using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
+using DesktopManager.Ipc;
 using DesktopManager.Native;
 using Serilog;
 
@@ -19,8 +22,8 @@ public sealed class MultiMonitorHost
 {
     private readonly IConfigStore _store;
     private readonly Dictionary<string, IconLayerWindow> _windows = new(StringComparer.Ordinal);
-    // M4：每屏壁纸窗口（与图标层 1:1 伴生，Z-order 在其正下方）+ 壁纸配置（单一真相源，孤儿含在内）。
-    private readonly Dictionary<string, WallpaperWindow> _wallpaperWindows = new(StringComparer.Ordinal);
+    // M6：壁纸改为独立子进程（每屏一个），Ready 后 SetParent 到 WorkerW；配置仍以本类为单一真相源。
+    private readonly Dictionary<string, ChildProcessManager> _wallpaperPlayers = new(StringComparer.Ordinal);
     private readonly List<WallpaperConfig> _wallpapers = new();
     // M5：显示组（组壁纸优先于独立壁纸；成员离线/删组自动回退）。
     private List<DisplayGroup> _displayGroups = new();
@@ -48,12 +51,9 @@ public sealed class MultiMonitorHost
 
     public IReadOnlyCollection<IconLayerWindow> Windows => _windows.Values;
 
-    // M4：Z 看门狗——每 2s 幂等重锚「图标层置底」（壁纸窗 MakeClickThrough 自管置底）。
-    // 真机：壁纸窗曾因未知机制浮到非 topmost 带顶（z=40）盖住普通窗口/任务栏；看门狗兜底。
+    // M4：Z 看门狗——每 2s 幂等重锚「图标层置底」。
+    // M6：壁纸已是 WorkerW 子窗口（不会浮高），看门狗只看图标层。
     private System.Windows.Threading.DispatcherTimer? _zWatchdog;
-
-    // M5-T4：组内视频漂移校正——2s 轮询，首成员为基准，|Δ|>0.5s 对齐。
-    private System.Windows.Threading.DispatcherTimer? _videoSync;
 
     public MultiMonitorHost(IConfigStore store)
     {
@@ -66,11 +66,7 @@ public sealed class MultiMonitorHost
         };
         _zWatchdog.Tick += (_, _) =>
         {
-            // 修闪：无条件 SetWindowPos 每 2s 触发 DWM 重组合 = 屏幕周期性闪一下。
-            // 改为仅检测到浮高时才重锚（正常态零 Z 操作）。
-            var own = _windows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle)
-                .Concat(_wallpaperWindows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle))
-                .ToList();
+            var own = _windows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle).ToList();
             if (WindowInterop.DetectOwnFloating(own))
             {
                 Log.Information("Z 看门狗：检测到浮高，重锚底序");
@@ -78,47 +74,6 @@ public sealed class MultiMonitorHost
             }
         };
         _zWatchdog.Start();
-
-        _videoSync = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(2)
-        };
-        _videoSync.Tick += (_, _) => SyncGroupVideos();
-        _videoSync.Start();
-    }
-
-    /// <summary>M5-T4：组内视频同步。基准 = 组成员序首个在线视频窗；其余 |Δ|&gt;0.5s → 对齐。
-    /// 校正跳变可接受（壁纸语义非观影）；暂停态位置冻结天然一致，无需特判。</summary>
-    private void SyncGroupVideos()
-    {
-        foreach (var g in _displayGroups)
-        {
-            if (string.IsNullOrWhiteSpace(g.WallpaperPath) || g.WallpaperKind != WallpaperKind.Video) continue;
-            var wins = g.MonitorIds
-                .Where(id => _wallpaperWindows.ContainsKey(id))
-                .Select(id => _wallpaperWindows[id])
-                .Where(w => w.IsVideo)
-                .ToList();
-            if (wins.Count < 2) continue;
-
-            var master = wins[0];
-            TimeSpan masterPos;
-            try { masterPos = master.VideoPosition; }
-            catch { continue; }
-            foreach (var w in wins.Skip(1))
-            {
-                try
-                {
-                    var drift = (w.VideoPosition - masterPos).Duration();
-                    if (drift > TimeSpan.FromSeconds(0.5))
-                    {
-                        w.VideoPosition = masterPos;
-                        Log.Information("视频同步校正：{Mon} 漂移={Drift:F1}s → 对齐基准", w.MonitorId, drift.TotalSeconds);
-                    }
-                }
-                catch { /* 窗口状态异常跳过，下轮再试 */ }
-            }
-        }
     }
 
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏建窗口并 Show。
@@ -157,12 +112,8 @@ public sealed class MultiMonitorHost
             win.Show();
             if (win.IsPrimary) PrimaryWindow ??= win;
 
-            // M4-T2：壁纸窗伴生（Z-order 由 BottomPair 统一编排）。
-            var wp = new WallpaperWindow(m);
-            _wallpaperWindows[m.PersistentId] = wp;
-            wp.Show();
-            ApplyWallpaperTo(m.PersistentId);
-            BottomPair(m.PersistentId);
+            // M6：壁纸子进程伴生（Ready → SetParent 到 WorkerW → Show → 应用壁纸）。
+            StartWallpaperPlayer(m);
         }
         PrimaryWindow ??= _windows.Values.First();
 
@@ -214,34 +165,68 @@ public sealed class MultiMonitorHost
         Log.Information("壁纸已移除：{Mon}", monitorId);
     }
 
-    /// <summary>M4-T4：Governor 暂停所有壁纸播放（幂等，窗口内部自判）。</summary>
+    /// <summary>M4-T4（M6 IPC 化）：Governor 暂停所有壁纸播放。</summary>
     public void PauseAllWallpapers()
     {
-        foreach (var wp in _wallpaperWindows.Values) wp.Pause();
+        foreach (var p in _wallpaperPlayers.Values) p.Send(new Pause());
     }
 
-    /// <summary>M4-T4：Governor 恢复所有壁纸播放（幂等）。</summary>
+    /// <summary>M4-T4（M6 IPC 化）：Governor 恢复所有壁纸播放。</summary>
     public void ResumeAllWallpapers()
     {
-        foreach (var wp in _wallpaperWindows.Values) wp.Resume();
+        foreach (var p in _wallpaperPlayers.Values) p.Send(new Resume());
     }
 
-    /// <summary>M4：Z-order 编排——图标层置底，壁纸窗精确插到它正下方。
-    /// 所有置底时机（图标层 ContentRendered/Activated/SourceInitialized 经 RequestBottom）都走这里，
-    /// 杜绝两窗各自 SendToBottom 互踩。</summary>
+    /// <summary>M6：启动壁纸子进程并挂到 WorkerW。异常不抛（单屏失败不影响其余屏）。</summary>
+    private void StartWallpaperPlayer(MonitorInfo m)
+    {
+        try
+        {
+            var exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopManager.Player.Wallpaper.exe");
+            var player = new ChildProcessManager(m.PersistentId);
+            player.Exited += code =>
+            {
+                // 异常退出（非 Stop 触发）→ 重启。_wallpaperPlayers 仍持有即视为需恢复。
+                if (code != 0 && _wallpaperPlayers.TryGetValue(m.PersistentId, out var cur) && cur == player)
+                {
+                    Log.Warning("壁纸子进程异常退出（code={Code}），重启：{Mon}", code, m.PersistentId);
+                    Application.Current?.Dispatcher.BeginInvoke(() =>
+                    {
+                        if (_wallpaperPlayers.Remove(m.PersistentId))
+                        {
+                            var live = MonitorEnumerator.Enumerate().FirstOrDefault(x => x.PersistentId == m.PersistentId);
+                            if (live is not null) StartWallpaperPlayer(live);
+                        }
+                    });
+                }
+            };
+            var args = $"--monitor-x {m.X} --monitor-y {m.Y} --monitor-w {m.Width} --monitor-h {m.Height}";
+            var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
+            DesktopLayerHost.AttachToDesktop(hwnd, m.X, m.Y, m.Width, m.Height);
+            _wallpaperPlayers[m.PersistentId] = player;
+            player.Send(new Show());
+            ApplyWallpaperTo(m.PersistentId);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "壁纸子进程启动失败：{Mon}", m.PersistentId);
+            playerDispose(m.PersistentId);
+        }
+
+        void playerDispose(string mon)
+        {
+            if (_wallpaperPlayers.Remove(mon, out var dead)) dead.Dispose();
+        }
+    }
+
+    /// <summary>M4：Z-order 编排——图标层置底（M6：壁纸子进程已是 WorkerW 子窗口，不参与顶层 Z-order）。</summary>
     private void BottomPair(string monitorId)
     {
-        // 图标层置底 + 壁纸窗插其正下方（幂等；看门狗每 2s 重锚，防壁纸窗浮高盖窗口/任务栏）。
         if (!_windows.TryGetValue(monitorId, out var win)) return;
         try
         {
             var iconH = new System.Windows.Interop.WindowInteropHelper(win).Handle;
             WindowInterop.SendToBottom(iconH);
-            if (_wallpaperWindows.TryGetValue(monitorId, out var wp))
-            {
-                var wpH = new System.Windows.Interop.WindowInteropHelper(wp).Handle;
-                WindowInterop.PlaceBelow(wpH, iconH);
-            }
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
@@ -249,7 +234,7 @@ public sealed class MultiMonitorHost
         }
     }
 
-    /// <summary>M4：壁纸窗可见性同步后重锚 Z-order（ShowWindow 会顶高 Z-order，真机：GIF 屏壁纸浮到 z=33 盖住普通窗口）。</summary>
+    /// <summary>M4：壁纸窗可见性同步后重锚 Z-order。</summary>
     public void ReassertBottom(string monitorId) => BottomPair(monitorId);
 
     /// <summary>M5：显示组只读视图（设置窗口用）。</summary>
@@ -292,26 +277,48 @@ public sealed class MultiMonitorHost
         return (_wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal)), null);
     }
 
-    /// <summary>M4：把配置里的壁纸应用到指定屏窗口（无配置 → 窗口隐藏，系统壁纸透出）。</summary>
+    /// <summary>M4（M6 IPC 化）：把壁纸配置通过 SetWallpaper 指令下发给子进程（无配置 → 空路径隐藏）。</summary>
     private void ApplyWallpaperTo(string monitorId)
     {
-        if (!_wallpaperWindows.TryGetValue(monitorId, out var wp)) return;
+        if (!_wallpaperPlayers.TryGetValue(monitorId, out var player)) return;
         var (cfg, group) = ResolveWallpaper(monitorId);
 
-        // M5-T3：组模式虚拟画布 = 组内在线成员 rect 的 bounding box；在线成员 <2 → null 降级单屏。
+        // M5-T3：组模式虚拟画布 = 组内在线成员 rect 的 bounding box；在线成员 <2 → 降级单屏。
         IntRect? canvas = null;
+        IntRect? monRect = null;
         if (group is not null)
         {
-            var onlineRects = MonitorEnumerator.Enumerate()
+            var online = MonitorEnumerator.Enumerate()
                 .Where(m => group.MonitorIds.Contains(m.PersistentId))
-                .Select(m => new IntRect(m.X, m.Y, m.X + m.Width, m.Y + m.Height))
                 .ToList();
-            if (onlineRects.Count >= 2) canvas = CrossScreenLayout.Canvas(onlineRects);
+            if (online.Count >= 2)
+            {
+                var rects = online.Select(m => new IntRect(m.X, m.Y, m.X + m.Width, m.Y + m.Height)).ToList();
+                canvas = CrossScreenLayout.Canvas(rects);
+                var me = online.First(x => x.PersistentId == monitorId);
+                monRect = new IntRect(me.X, me.Y, me.X + me.Width, me.Y + me.Height);
+            }
         }
 
-        Log.Information("壁纸分发: {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
+        Log.Information("壁纸分发(IPC): {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
             monitorId, cfg is not null, cfg?.Path ?? "(null)", canvas is not null, _wallpapers.Count, _displayGroups.Count);
-        wp.SetWallpaper(cfg, canvas);
+
+        var msg = new SetWallpaper
+        {
+            Path = cfg?.Path ?? "",
+            Kind = cfg is null ? "image" : cfg.Kind switch
+            {
+                WallpaperKind.Video => "video",
+                WallpaperKind.Gif => "gif",
+                _ => "image",
+            },
+            CanvasW = canvas?.Width ?? 0,
+            CanvasH = canvas?.Height ?? 0,
+            // 本屏在虚拟画布中的偏移（子进程负偏移放置，跨屏拼接对齐）
+            CropX = canvas is not null && monRect is not null ? monRect.Left - canvas.Left : null,
+            CropY = canvas is not null && monRect is not null ? monRect.Top - canvas.Top : null,
+        };
+        player.Send(msg);
     }
 
     /// <summary>M3-T6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换，DisplayChangeWatcher 防抖后调，UI 线程）。
@@ -349,7 +356,7 @@ public sealed class MultiMonitorHost
             w.LayoutChanged -= RequestSave;
             w.Close();
             _windows.Remove(goneId);
-            if (_wallpaperWindows.Remove(goneId, out var wpGone)) wpGone.Close();
+            if (_wallpaperPlayers.Remove(goneId, out var pGone)) pGone.Stop();
             Log.Information("拓扑重建：显示器离线，关闭图标层窗口 {Id}", goneId);
         }
 
@@ -385,11 +392,12 @@ public sealed class MultiMonitorHost
             if (a is not null) myPositionsByMon[a].Add(p);
         }
 
-        // 4. 存活屏：仅重定位（本地坐标不换算）。
+        // 4. 存活屏：仅重定位（本地坐标不换算）。壁纸子进程窗口已挂 WorkerW，位置走 IPC。
         foreach (var m in monitors)
         {
             if (_windows.TryGetValue(m.PersistentId, out var win)) win.RepositionTo(m);
-            if (_wallpaperWindows.TryGetValue(m.PersistentId, out var wpAlive)) wpAlive.RepositionTo(m);
+            if (_wallpaperPlayers.TryGetValue(m.PersistentId, out var pAlive))
+                pAlive.Send(new SetPosition { X = m.X, Y = m.Y, W = m.Width, H = m.Height });
         }
 
         // 5. 新增屏：建窗 + 加载该屏布局（拔线插回 = 走这里原位恢复），并按归属补发桌面图标。
@@ -403,11 +411,8 @@ public sealed class MultiMonitorHost
             win.RequestBottom += () => BottomPair(m.PersistentId);
             _windows[m.PersistentId] = win;
             win.Show();
-            // M4：新屏壁纸窗伴生（插回屏的壁纸按 config 原位恢复）。
-            var wp = new WallpaperWindow(m);
-            _wallpaperWindows[m.PersistentId] = wp;
-            wp.Show();
-            ApplyWallpaperTo(m.PersistentId);
+            // M6：新屏壁纸子进程伴生（插回屏的壁纸按 config 原位恢复）。
+            StartWallpaperPlayer(m);
             BottomPair(m.PersistentId);
             newWindows.Add(win);
             Log.Information("拓扑重建：显示器上线，新建图标层窗口 {Id}", m.PersistentId);
@@ -616,9 +621,8 @@ public sealed class MultiMonitorHost
             w.Close();
         }
         _windows.Clear();
-        foreach (var wp in _wallpaperWindows.Values) wp.Close();
-        _wallpaperWindows.Clear();
+        foreach (var p in _wallpaperPlayers.Values) p.Stop();
+        _wallpaperPlayers.Clear();
         _zWatchdog?.Stop();
-        _videoSync?.Stop();
     }
 }

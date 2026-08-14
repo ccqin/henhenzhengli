@@ -116,6 +116,56 @@ public static class WindowInterop
         SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOZORDER);
     }
 
+    // ---------- M6：WorkerW 桌面层（Lively 方案） ----------
+
+    private const uint WM_SPAWNWORKERW = 0x052C;
+    private const uint SMTO_NORMAL = 0x0;
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string? className, string? title);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
+        uint flags, uint timeout, out IntPtr result);
+
+    /// <summary>M6：生成并定位 WorkerW（Lively 同款）。发送 0x052C 让 shell 在壁纸层创建 WorkerW，
+    /// 返回该 WorkerW 句柄（SHELLDLL_DefView 之下）；找不到时退化返回 Progman。</summary>
+    public static IntPtr SetupDesktopLayer()
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return IntPtr.Zero;
+        SendMessageTimeout(progman, WM_SPAWNWORKERW, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
+        // 标准结构：Progman → SHELLDLL_DefView（原生图标）→ WorkerW（壁纸层，在 DefView 之后 = 之下）
+        var defView = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+        if (defView != IntPtr.Zero)
+        {
+            var workerW = FindWindowEx(IntPtr.Zero, progman, "WorkerW", null);
+            if (workerW != IntPtr.Zero) return workerW;
+        }
+        // 某些 shell 结构（DefView 直接挂 WorkerW）：找可见 WorkerW
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, _) =>
+        {
+            var sb = new StringBuilder(64);
+            GetClassName(h, sb, sb.Capacity);
+            if (sb.ToString() == "WorkerW" && IsWindowVisible(h)) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found != IntPtr.Zero ? found : progman;
+    }
+
+    /// <summary>M6：把子进程窗口 SetParent 到 <paramref name="workerW"/>（WorkerW/Progman）成为桌面子窗口。
+    /// 桌面子窗口天然免疫 Win+D（ShowDesktop 只作用于顶层窗口）。坐标转为父窗客户区相对坐标。</summary>
+    public static void AttachToDesktop(IntPtr hWnd, IntPtr workerW, int monX, int monY, int monW, int monH)
+    {
+        SetParent(hWnd, workerW);
+        long st = GetStyle(hWnd);
+        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
+        GetWindowRect(workerW, out var pr);
+        SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOACTIVATE);
+        long ex = GetExtendedStyle(hWnd);
+        SetExtendedStyle(hWnd, ex | WS_EX_NOACTIVATE);
+    }
+
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
