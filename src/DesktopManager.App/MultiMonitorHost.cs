@@ -190,7 +190,7 @@ public sealed class MultiMonitorHost
         StartIconPlayer(live, fences, positions);
         if (_iconChildren.TryGetValue(monitorId, out var reborn) && _lastAll.Count > 0)
         {
-            reborn.Player.Send(new SetIcons { Items = _lastAll.Select(ToDto).ToList() });
+            reborn.Player.Send(new SetIcons { Items = SplitFor(monitorId, _lastAll) });
         }
     }
 
@@ -500,7 +500,7 @@ public sealed class MultiMonitorHost
         {
             foreach (var mon in newMonitors)
                 if (_iconChildren.TryGetValue(mon, out var nc))
-                    nc.Player.Send(new SetIcons { Items = _lastAll.Select(ToDto).ToList() });
+                    nc.Player.Send(new SetIcons { Items = SplitFor(mon, _lastAll) });
         }
 
         // 6. 主屏可能切换。
@@ -513,13 +513,29 @@ public sealed class MultiMonitorHost
 
     // ---------- 图标分发（sync → IPC） ----------
 
-    /// <summary>启动全量分发：全量下发各屏（子进程内自行按 Fence 归属过滤散落区）。</summary>
+    /// <summary>启动全量分发：按归属切分下发各屏（Fence/散落持有 → 该屏；config hint → 该屏；无归属 → 主屏；孤儿跳过）。</summary>
     public void ApplyInitialSnapshot(IReadOnlyList<IconItem> all)
     {
         _lastAll.Clear();
         _lastAll.AddRange(all);
-        foreach (var c in _iconChildren.Values)
-            c.Player.Send(new SetIcons { Items = all.Select(ToDto).ToList() });
+        foreach (var mon in _iconChildren.Keys.ToList())
+            _iconChildren[mon].Player.Send(new SetIcons { Items = SplitFor(mon, all) });
+    }
+
+    /// <summary>按归属为某屏切分图标全集（与 Distribute 语义一致，供初始/重建/重启补发）。</summary>
+    private List<IconDto> SplitFor(string monitorId, IEnumerable<IconItem> all)
+    {
+        var result = new List<IconDto>();
+        foreach (var item in all)
+        {
+            if (_orphanPaths.Contains(item.FilePath)) continue;
+            var owner = FindOwnerMonitor(item.FilePath);
+            if (owner is null && _looseAssignHint.TryGetValue(item.FilePath, out var hint)
+                && _iconChildren.ContainsKey(hint)) owner = hint;
+            if (owner is null) owner = PrimaryMonitorId;
+            if (owner == monitorId) result.Add(ToDto(item));
+        }
+        return result;
     }
 
     /// <summary>增量分发（sync.Changed）。Removed 广播所有子进程（各自 reconcile no-op 防归属竞态）；
