@@ -127,30 +127,39 @@ public static class WindowInterop
     private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
         uint flags, uint timeout, out IntPtr result);
 
-    /// <summary>M6：生成并定位 WorkerW（Lively 同款）。发送 0x052C 让 shell 在壁纸层创建 WorkerW，
-    /// 返回该 WorkerW 句柄（SHELLDLL_DefView 之下）；找不到时退化返回 Progman。</summary>
+    /// <summary>M6：生成并定位壁纸层 WorkerW（Lively 同款）。发送 0x052C 让 shell 确保 WorkerW 存在。
+    /// explorer 两种稳定结构都要认（真机：重启后 DefView 常驻 Progman，壁纸 WorkerW 是 Progman 子序中
+    /// DefView 之后的那个；若 0x052C 新建了顶层 WorkerW，则 DefView 会被移过去）。</summary>
     public static IntPtr SetupDesktopLayer()
     {
         var progman = FindWindow("Progman", null);
         if (progman == IntPtr.Zero) return IntPtr.Zero;
         SendMessageTimeout(progman, WM_SPAWNWORKERW, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
-        // 标准结构：Progman → SHELLDLL_DefView（原生图标）→ WorkerW（壁纸层，在 DefView 之后 = 之下）
+
+        // ① 常见稳定态：DefView 在 Progman 下 → 壁纸 WorkerW = Progman 子序中 DefView 之后
         var defView = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
         if (defView != IntPtr.Zero)
         {
-            var workerW = FindWindowEx(IntPtr.Zero, progman, "WorkerW", null);
-            if (workerW != IntPtr.Zero) return workerW;
+            var inner = FindWindowEx(progman, defView, "WorkerW", null);
+            if (inner != IntPtr.Zero) return inner;
         }
-        // 某些 shell 结构（DefView 直接挂 WorkerW）：找可见 WorkerW
-        IntPtr found = IntPtr.Zero;
-        EnumWindows((h, _) =>
+
+        // ② 0x052C 新生态：DefView 被移到顶层 WorkerW 下 → 顶层 Z 序 Progman 之后的 WorkerW
+        var topWorker = FindWindowEx(IntPtr.Zero, progman, "WorkerW", null);
+        if (topWorker != IntPtr.Zero) return topWorker;
+
+        // ③ 兜底：DefView 直接挂在某顶层 WorkerW 下（部分 shell 结构）
+        if (defView == IntPtr.Zero)
         {
-            var sb = new StringBuilder(64);
-            GetClassName(h, sb, sb.Capacity);
-            if (sb.ToString() == "WorkerW" && IsWindowVisible(h)) { found = h; return false; }
-            return true;
-        }, IntPtr.Zero);
-        return found != IntPtr.Zero ? found : progman;
+            IntPtr found = IntPtr.Zero;
+            EnumWindows((h, _) =>
+            {
+                if (FindWindowEx(h, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero) { found = h; return false; }
+                return true;
+            }, IntPtr.Zero);
+            if (found != IntPtr.Zero) return found;
+        }
+        return progman;
     }
 
     /// <summary>M6：把子进程窗口 SetParent 到 <paramref name="workerW"/>（WorkerW/Progman）成为桌面子窗口。
