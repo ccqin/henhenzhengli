@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DesktopManager.Core\DesktopManager.Core.csproj" />
+    <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
   </ItemGroup>
 
 </Project>

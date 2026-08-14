@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopManager.App", "src\D
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopManager.Tests", "src\DesktopManager.Tests\DesktopManager.Tests.csproj", "{442783BB-328A-4C71-8246-67AC8A64DA9A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopManager.Ipc", "src\DesktopManager.Ipc\DesktopManager.Ipc.csproj", "{8B393B01-3326-458B-960E-AE11E1EE1C53}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -71,6 +73,18 @@ Global
 		{442783BB-328A-4C71-8246-67AC8A64DA9A}.Release|x64.Build.0 = Release|Any CPU
 		{442783BB-328A-4C71-8246-67AC8A64DA9A}.Release|x86.ActiveCfg = Release|Any CPU
 		{442783BB-328A-4C71-8246-67AC8A64DA9A}.Release|x86.Build.0 = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|x64.Build.0 = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Debug|x86.Build.0 = Debug|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|x64.ActiveCfg = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|x64.Build.0 = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|x86.ActiveCfg = Release|Any CPU
+		{8B393B01-3326-458B-960E-AE11E1EE1C53}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -80,5 +94,6 @@ Global
 		{FC758134-BAED-4906-80F6-34744DF440E6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{42836652-88F4-4136-A117-83BDEF7030D1} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{442783BB-328A-4C71-8246-67AC8A64DA9A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{8B393B01-3326-458B-960E-AE11E1EE1C53} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
