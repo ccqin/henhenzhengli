@@ -163,8 +163,11 @@ public static class WindowInterop
     }
 
     /// <summary>M6：把子进程窗口 SetParent 到 <paramref name="workerW"/>（WorkerW/Progman）成为桌面子窗口。
-    /// 桌面子窗口天然免疫 Win+D（ShowDesktop 只作用于顶层窗口）。坐标转为父窗客户区相对坐标。</summary>
-    public static void AttachToDesktop(IntPtr hWnd, IntPtr workerW, int monX, int monY, int monW, int monH)
+    /// 桌面子窗口天然免疫 Win+D（ShowDesktop 只作用于顶层窗口）。坐标转为父窗客户区相对坐标。
+    /// colorKeyTransparent：图标层用——WPF AllowsTransparency 窗口做 WorkerW 子窗口不被 DWM 合成（真机），
+    /// 改普通不透明窗口 + 色键（纯黑被抠成透明）。</summary>
+    public static void AttachToDesktop(IntPtr hWnd, IntPtr workerW, int monX, int monY, int monW, int monH,
+        bool colorKeyTransparent = false)
     {
         SetParent(hWnd, workerW);
         long st = GetStyle(hWnd);
@@ -173,7 +176,17 @@ public static class WindowInterop
         SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOACTIVATE);
         long ex = GetExtendedStyle(hWnd);
         SetExtendedStyle(hWnd, ex | WS_EX_NOACTIVATE);
+        if (colorKeyTransparent)
+        {
+            SetExtendedStyle(hWnd, GetExtendedStyle(hWnd) | WS_EX_LAYERED);
+            SetLayeredWindowAttributes(hWnd, 0, 255, LWA_COLORKEY);
+        }
     }
+
+    private const uint LWA_COLORKEY = 1;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")]

@@ -163,7 +163,7 @@ public sealed class MultiMonitorHost
                        $"--x {m.X} --y {m.Y} --w {m.Width} --h {m.Height} " +
                        $"--work-x {m.WorkX} --work-y {m.WorkY} --work-w {m.WorkWidth} --work-h {m.WorkHeight}";
             var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
-            DesktopLayerHost.AttachToDesktop(hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight);
+            DesktopLayerHost.AttachToDesktop(hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight, iconLayer: true);
             _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
             player.Send(new Show());
             player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });

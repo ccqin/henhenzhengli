@@ -26,11 +26,11 @@ public static class DesktopLayerHost
     /// <summary>WorkerW 缓存失效（explorer 重启后必须重找）。</summary>
     public static void Invalidate() { lock (Lock) _workerW = IntPtr.Zero; }
 
-    /// <summary>把子进程窗口挂到桌面层。</summary>
-    public static void AttachToDesktop(long childHwnd, int monX, int monY, int monW, int monH)
+    /// <summary>把子进程窗口挂到桌面层。iconLayer=true 用色键透明（见 WindowInterop.AttachToDesktop 注释）。</summary>
+    public static void AttachToDesktop(long childHwnd, int monX, int monY, int monW, int monH, bool iconLayer = false)
     {
         var workerW = GetWorkerW();
         if (workerW == IntPtr.Zero) throw new InvalidOperationException("WorkerW 不可用");
-        WindowInterop.AttachToDesktop(new IntPtr(childHwnd), workerW, monX, monY, monW, monH);
+        WindowInterop.AttachToDesktop(new IntPtr(childHwnd), workerW, monX, monY, monW, monH, iconLayer);
     }
 }
