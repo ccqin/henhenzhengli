@@ -54,7 +54,7 @@ public sealed class IpcChannel : IDisposable
             IpcMessage? msg;
             try
             {
-                msg = await ReceiveAsync(ct);
+                msg = await ReceiveAsync(ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or ObjectDisposedException)
             {

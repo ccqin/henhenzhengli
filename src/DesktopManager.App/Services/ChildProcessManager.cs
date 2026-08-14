@@ -47,7 +47,8 @@ public sealed class ChildProcessManager : IDisposable
         };
 
         // Ready 是子进程第一条 stdout 消息，先同步读它，再进入常驻接收循环。
-        var first = await _channel.ReceiveAsync();
+        // ConfigureAwait(false)：调用方（UI 线程）会 GetResult() 同步等待，若续体回 UI 上下文 = 死锁。
+        var first = await _channel.ReceiveAsync().ConfigureAwait(false);
         if (first is not Ready ready)
             throw new InvalidOperationException($"子进程首条消息不是 Ready: {first?.GetType().Name ?? "EOF"}");
         Hwnd = ready.Hwnd;

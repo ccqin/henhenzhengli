@@ -22,9 +22,9 @@ public static class IpcReader
         while (true)
         {
 #if NET8_0_OR_GREATER
-            var line = await reader.ReadLineAsync(ct);
+            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
 #else
-            var line = await reader.ReadLineAsync();
+            var line = await reader.ReadLineAsync().ConfigureAwait(false);
 #endif
             if (line is null) return null;
             if (string.IsNullOrWhiteSpace(line)) continue;
