@@ -4,11 +4,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using DesktopManager.App.Services;
+using DesktopManager.Player.Icons;
 using DesktopManager.Core.Models;
 
-using DesktopManager.App.Windows;
-namespace DesktopManager.App.Controls;
+namespace DesktopManager.Player.Icons;
 
 /// <summary>
 /// 收纳盒控件（Fences 风格）：半透明、可整体拖动、可折叠、标题可编辑的盒子。

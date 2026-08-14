@@ -3,7 +3,7 @@ using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using DesktopManager.Native;
 
-namespace DesktopManager.App.Services;
+namespace DesktopManager.Player.Icons;
 
 /// <summary>
 /// 把 IconExtractorNative 返回的 HICON 转为 WPF BitmapSource，带路径->BitmapSource 字典缓存。

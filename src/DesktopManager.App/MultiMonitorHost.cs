@@ -1,9 +1,8 @@
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Windows.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using DesktopManager.App.Services;
-using DesktopManager.App.Windows;
 using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
 using DesktopManager.Ipc;
@@ -12,81 +11,95 @@ using Serilog;
 
 namespace DesktopManager.App;
 
-/// <summary>M3-T3/T4：多屏宿主。每显示器一个 <see cref="IconLayerWindow"/>（定位到各自工作区），
-/// 负责：①启动枚举显示器 + 按 <see cref="MonitorAssignment"/> 把 config 的 Fence/位置切分到各窗口；
-/// ②桌面同步 diff 按归属分发（Added 投归属窗，无归属落主屏；Removed 广播）；
-/// ③聚合持久化（所有窗口布局 + 离线屏孤儿配置，防抖 Save，替代单窗口时代的窗口内 Save）。
-/// <para>孤儿语义：拔掉屏的 Fence/位置保留在 config（不进任何窗口、不渲染），插回后按持久 ID 原位恢复（T6）。</para>
-/// <para>运行时归属真相源 = 窗口持有（fenced/loose），不维护 host 侧副本（避免双真相源）。</para></summary>
+/// <summary>图标层子进程运行时状态：IPC 通道 + 最新布局缓存（LayoutChanged 上报维护，
+/// 作为运行时归属真相源 + 聚合持久化数据源）。</summary>
+internal sealed class IconChild
+{
+    public required ChildProcessManager Player { get; init; }
+    public required MonitorInfo Monitor { get; init; }
+    public List<FenceConfig> Fences { get; set; } = [];
+    public List<IconPosition> Positions { get; set; } = [];
+
+    public bool OwnsPath(string path) =>
+        Fences.Any(f => f.IconFilePaths.Contains(path, StringComparer.OrdinalIgnoreCase))
+        || Positions.Any(p => string.Equals(p.FilePath, path, StringComparison.OrdinalIgnoreCase));
+
+    public bool ContainsFence(string fenceId) => Fences.Any(f => f.Id == fenceId);
+}
+
+/// <summary>M6 子进程架构：壁纸 + 图标层都是独立子进程（Ready 上报 hwnd → SetParent 到 WorkerW）。
+/// 本类职责：①启动/管理子进程生命周期；②config 归属切分下发（SetFences/SetIcons/ApplyDiff）；
+/// ③跨屏操作中转（拖拽迁移/全局清选中）；④聚合持久化（子进程 LayoutChanged 上报 + 孤儿配置，防抖落盘）。
+/// <para>孤儿语义：拔掉屏的 Fence/位置保留在 config（不进任何子进程、不渲染），插回后按持久 ID 原位恢复。</para></summary>
 public sealed class MultiMonitorHost
 {
     private readonly IConfigStore _store;
-    private readonly Dictionary<string, IconLayerWindow> _windows = new(StringComparer.Ordinal);
-    // M6：壁纸改为独立子进程（每屏一个），Ready 后 SetParent 到 WorkerW；配置仍以本类为单一真相源。
+    private readonly Dictionary<string, IconChild> _iconChildren = new(StringComparer.Ordinal);
+    // M6：壁纸子进程（每屏一个）+ 壁纸配置（单一真相源，孤儿含在内）。
     private readonly Dictionary<string, ChildProcessManager> _wallpaperPlayers = new(StringComparer.Ordinal);
     private readonly List<WallpaperConfig> _wallpapers = new();
     // M5：显示组（组壁纸优先于独立壁纸；成员离线/删组自动回退）。
     private List<DisplayGroup> _displayGroups = new();
 
-    // 孤儿（归属屏离线）：不进任何窗口，保存时原样带回（防布局数据丢失）。
+    // 孤儿（归属屏离线）：不进任何子进程，保存时原样带回（防布局数据丢失）。
     private readonly List<FenceConfig> _orphanFences = new();
     private readonly List<IconPosition> _orphanPositions = new();
     // 孤儿屏上的全部图标 path（loose + Fence 内容）：初始分发/Added 路由跳过，防误落主屏。
     private readonly HashSet<string> _orphanPaths = new(StringComparer.OrdinalIgnoreCase);
 
-    // 桌面最新全集（增量维护）：拓扑重建给新增窗口补图标用。
+    // 桌面最新全集（增量维护）：拓扑重建给新增子进程补图标用。
     private readonly List<IconItem> _lastAll = new();
-    // path → 归属屏（config 位置记录解析出的在线归属）：启动/重建分发 hint——
-    // 窗口散落区未加载前 FindOwner 查不到，必须靠它把图标投到正确屏（否则全落主屏）。
+    // path → 归属屏（config 位置记录解析出的在线归属）：启动分发 hint。
     private Dictionary<string, string> _looseAssignHint = new(StringComparer.OrdinalIgnoreCase);
 
-    // 防抖保存（从单窗口时代的 IconLayerWindow 上移）：任一窗口 LayoutChanged → 500ms 后聚合落盘。
+    // 防抖保存：任一子进程 LayoutChanged → 500ms 后聚合落盘。
     private readonly System.Threading.Timer _saveTimer;
     private readonly object _saveLock = new();
     private static readonly TimeSpan SaveDebounce = TimeSpan.FromMilliseconds(500);
     private volatile bool _savingDisabled;
 
-    /// <summary>主屏窗口（新图标缺省归属 + ShellRestartWatcher 挂载点）。无主屏（畸形拓扑）退化首个窗口。</summary>
-    public IconLayerWindow? PrimaryWindow { get; private set; }
+    // 跨屏迁移中转的 pending 槽（用户操作低频，单槽 + 后到覆盖足够）。
+    private (string TargetMonitor, string? Path, string? FenceId, double X, double Y)? _pendingImport;
 
-    public IReadOnlyCollection<IconLayerWindow> Windows => _windows.Values;
-
-    // M4：Z 看门狗——每 2s 幂等重锚「图标层置底」。
-    // M6：壁纸已是 WorkerW 子窗口（不会浮高），看门狗只看图标层。
-    private System.Windows.Threading.DispatcherTimer? _zWatchdog;
+    /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
+    public string? PrimaryMonitorId { get; private set; }
 
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
         _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-        _zWatchdog = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(2)
-        };
-        _zWatchdog.Tick += (_, _) =>
-        {
-            var own = _windows.Values.Select(w => new System.Windows.Interop.WindowInteropHelper(w).Handle).ToList();
-            if (WindowInterop.DetectOwnFloating(own))
-            {
-                Log.Information("Z 看门狗：检测到浮高，重锚底序");
-                foreach (var mon in _windows.Keys.ToList()) BottomPair(mon);
-            }
-        };
-        _zWatchdog.Start();
     }
 
-    /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏建窗口并 Show。
+    /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏启动壁纸 + 图标层子进程并挂 WorkerW。
     /// 零显示器（理论不发生）抛异常，由 App 走回滚（RestoreExplorer）。</summary>
-    public void Attach()
+    public void Attach() => AttachCore(_store.Load());
+
+    /// <summary>M6：explorer 重启后重建所有子进程（旧 WorkerW 已销毁，子窗口随之失效）。
+    /// 以当前布局缓存为新基线（先落盘），重启全部子进程并重新挂新 WorkerW。</summary>
+    public void ReattachAll()
+    {
+        var snapshot = BuildAggregatedConfig();
+        foreach (var c in _iconChildren.Values) c.Player.Stop();
+        _iconChildren.Clear();
+        foreach (var p in _wallpaperPlayers.Values) p.Stop();
+        _wallpaperPlayers.Clear();
+        _orphanFences.Clear(); _orphanPositions.Clear(); _orphanPaths.Clear();
+        _wallpapers.Clear(); _displayGroups = new List<DisplayGroup>();
+        DesktopLayerHost.Invalidate();
+        lock (_saveLock) { if (!_savingDisabled) _store.Save(snapshot); }
+        AttachCore(snapshot);
+        if (_lastAll.Count > 0) ApplyInitialSnapshot(_lastAll);
+    }
+
+    private void AttachCore(AppConfig config)
     {
         var monitors = MonitorEnumerator.Enumerate();
         if (monitors.Count == 0)
             throw new InvalidOperationException("未枚举到任何显示器，无法创建图标层");
 
-        var config = _store.Load();
-        _wallpapers.AddRange(config.Wallpapers); // M4：壁纸配置（离线屏的也保留 = 孤儿语义）
-        _displayGroups = config.DisplayGroups.ToList(); // M5：显示组
+        _wallpapers.AddRange(config.Wallpapers);
+        _displayGroups = config.DisplayGroups.ToList();
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -104,20 +117,14 @@ public sealed class MultiMonitorHost
                 if (looseAssign[p.FilePath] == m.PersistentId) myPositions.Add(p);
             }
 
-            var win = new IconLayerWindow(m, myFences, myPositions);
-            win.Host = this; // M3-T5：跨屏拖拽迁移协调
-            win.LayoutChanged += RequestSave;
-            win.RequestBottom += () => BottomPair(m.PersistentId); // M4：Z-order 编排收归 host
-            _windows[m.PersistentId] = win;
-            win.Show();
-            if (win.IsPrimary) PrimaryWindow ??= win;
-
-            // M6：壁纸子进程伴生（Ready → SetParent 到 WorkerW → Show → 应用壁纸）。
+            // 壁纸先挂（WorkerW 内 sibling 低序），图标层后挂（其上）。
             StartWallpaperPlayer(m);
+            StartIconPlayer(m, myFences, myPositions);
+            if (m.IsPrimary) PrimaryMonitorId ??= m.PersistentId;
         }
-        PrimaryWindow ??= _windows.Values.First();
+        PrimaryMonitorId ??= monitors[0].PersistentId;
 
-        // 分发 hint：config 位置记录解析出的在线归属（启动分发用，见 _looseAssignHint 注释）。
+        // 分发 hint：config 位置记录解析出的在线归属（启动分发用）。
         _looseAssignHint = looseAssign
             .Where(kv => kv.Value is not null)
             .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase);
@@ -136,45 +143,55 @@ public sealed class MultiMonitorHost
             _orphanPaths.Add(p.FilePath);
         }
 
-        Log.Information("MultiMonitorHost：{Count} 个图标层窗口（{Monitors}），孤儿 Fence={OF} 位置={OP}",
-            _windows.Count, string.Join(", ", monitors.Select(m => m.PersistentId)),
+        Log.Information("MultiMonitorHost(M6)：{Count} 屏子进程就绪（{Monitors}），孤儿 Fence={OF} 位置={OP}",
+            _iconChildren.Count, string.Join(", ", monitors.Select(m => m.PersistentId)),
             _orphanFences.Count, _orphanPositions.Count);
     }
 
-    /// <summary>M4-T5：设置某屏壁纸（右键菜单入口）：更新配置 + 即时应用 + 防抖落盘。</summary>
-    public void SetWallpaper(string monitorId, string path)
+    // ---------- 子进程启动 ----------
+
+    /// <summary>M6：启动图标层子进程并挂到 WorkerW（壁纸之上）。挂载后立即下发本屏 Fence 子集。</summary>
+    private void StartIconPlayer(MonitorInfo m, List<FenceConfig> fences, List<IconPosition> positions)
     {
-        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
-        _wallpapers.Add(new WallpaperConfig
+        try
         {
-            MonitorId = monitorId,
-            Kind = WallpaperConfig.DetectKind(path),
-            Path = path
-        });
-        ApplyWallpaperTo(monitorId);
-        RequestSave();
-        Log.Information("壁纸已设置：{Mon} ← {Path}", monitorId, path);
+            var exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopManager.Player.Icons.exe");
+            var player = new ChildProcessManager(m.PersistentId);
+            player.MessageReceived += msg => Application.Current?.Dispatcher.BeginInvoke(() => OnIconMessage(m.PersistentId, msg));
+            player.Exited += code => Application.Current?.Dispatcher.BeginInvoke(() => OnIconChildExited(m.PersistentId, code));
+            var args = $"--monitor-id {m.PersistentId} --device {m.DeviceName} --primary {(m.IsPrimary ? 1 : 0)} " +
+                       $"--x {m.X} --y {m.Y} --w {m.Width} --h {m.Height} " +
+                       $"--work-x {m.WorkX} --work-y {m.WorkY} --work-w {m.WorkWidth} --work-h {m.WorkHeight}";
+            var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
+            DesktopLayerHost.AttachToDesktop(hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight);
+            _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
+            player.Send(new Show());
+            player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "图标层子进程启动失败：{Mon}", m.PersistentId);
+            if (_iconChildren.Remove(m.PersistentId, out var dead)) dead.Player.Dispose();
+        }
     }
 
-    /// <summary>M4-T5：移除某屏壁纸（回退系统壁纸）：配置删除 + 窗口隐藏 + 落盘。</summary>
-    public void RemoveWallpaper(string monitorId)
+    /// <summary>M6：图标层子进程异常退出 → 重启 + 恢复 Fences + 补发全量图标。</summary>
+    private void OnIconChildExited(string monitorId, int code)
     {
-        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
-        ApplyWallpaperTo(monitorId); // 无配置 → 窗口 Hidden
-        RequestSave();
-        Log.Information("壁纸已移除：{Mon}", monitorId);
-    }
-
-    /// <summary>M4-T4（M6 IPC 化）：Governor 暂停所有壁纸播放。</summary>
-    public void PauseAllWallpapers()
-    {
-        foreach (var p in _wallpaperPlayers.Values) p.Send(new Pause());
-    }
-
-    /// <summary>M4-T4（M6 IPC 化）：Governor 恢复所有壁纸播放。</summary>
-    public void ResumeAllWallpapers()
-    {
-        foreach (var p in _wallpaperPlayers.Values) p.Send(new Resume());
+        if (code == 0) return;
+        if (!_iconChildren.TryGetValue(monitorId, out var child)) return; // 正常 Stop 已移除
+        Log.Warning("图标层子进程异常退出（code={Code}），重启：{Mon}", code, monitorId);
+        var fences = child.Fences;
+        var positions = child.Positions;
+        _iconChildren.Remove(monitorId);
+        var live = MonitorEnumerator.Enumerate().FirstOrDefault(x => x.PersistentId == monitorId);
+        if (live is null) return;
+        // fences 以缓存为准（含运行期变更）；positions 仅作排位缓存，图标全集走 _lastAll 补发。
+        StartIconPlayer(live, fences, positions);
+        if (_iconChildren.TryGetValue(monitorId, out var reborn) && _lastAll.Count > 0)
+        {
+            reborn.Player.Send(new SetIcons { Items = _lastAll.Select(ToDto).ToList() });
+        }
     }
 
     /// <summary>M6：启动壁纸子进程并挂到 WorkerW。异常不抛（单屏失败不影响其余屏）。</summary>
@@ -186,7 +203,6 @@ public sealed class MultiMonitorHost
             var player = new ChildProcessManager(m.PersistentId);
             player.Exited += code =>
             {
-                // 异常退出（非 Stop 触发）→ 重启。_wallpaperPlayers 仍持有即视为需恢复。
                 if (code != 0 && _wallpaperPlayers.TryGetValue(m.PersistentId, out var cur) && cur == player)
                 {
                     Log.Warning("壁纸子进程异常退出（code={Code}），重启：{Mon}", code, m.PersistentId);
@@ -210,64 +226,135 @@ public sealed class MultiMonitorHost
         catch (Exception ex)
         {
             Log.Error(ex, "壁纸子进程启动失败：{Mon}", m.PersistentId);
-            playerDispose(m.PersistentId);
-        }
-
-        void playerDispose(string mon)
-        {
-            if (_wallpaperPlayers.Remove(mon, out var dead)) dead.Dispose();
+            if (_wallpaperPlayers.Remove(m.PersistentId, out var dead)) dead.Dispose();
         }
     }
 
-    /// <summary>M4：Z-order 编排——图标层置底（M6：壁纸子进程已是 WorkerW 子窗口，不参与顶层 Z-order）。</summary>
-    private void BottomPair(string monitorId)
+    // ---------- 图标层子进程消息处理 ----------
+
+    private void OnIconMessage(string monitorId, IpcMessage msg)
     {
-        if (!_windows.TryGetValue(monitorId, out var win)) return;
-        try
+        switch (msg)
         {
-            var iconH = new System.Windows.Interop.WindowInteropHelper(win).Handle;
-            WindowInterop.SendToBottom(iconH);
-        }
-        catch (System.ComponentModel.Win32Exception ex)
-        {
-            Log.Warning(ex, "图标层置底失败（{Mon}）", monitorId);
+            case LayoutChanged lc:
+                if (_iconChildren.TryGetValue(monitorId, out var child))
+                {
+                    child.Fences = lc.Fences.Select(f => FromDto(f) with { MonitorId = monitorId }).ToList();
+                    child.Positions = lc.Positions.Select(p => new IconPosition(p.Path, p.X, p.Y, monitorId)).ToList();
+                    RequestSave();
+                }
+                break;
+
+            case ClearSelectionExcept cs:
+                foreach (var (mon, c) in _iconChildren)
+                    if (mon != cs.MonitorId) c.Player.Send(new ClearSelection());
+                break;
+
+            case TransferLooseReq req:
+                // 主进程中转：源屏（缓存归属）导出 → 目标屏导入。
+                var owner = FindOwnerMonitor(req.Path);
+                if (owner is null || owner == req.TargetMonitorId) break;
+                _pendingImport = (req.TargetMonitorId, req.Path, null, req.X, req.Y);
+                _iconChildren[owner].Player.Send(new ExportIcon { Path = req.Path });
+                break;
+
+            case TransferFenceReq req:
+                var fenceOwner = _iconChildren.FirstOrDefault(kv => kv.Value.ContainsFence(req.FenceId));
+                if (fenceOwner.Key is null || fenceOwner.Key == req.TargetMonitorId) break;
+                _pendingImport = (req.TargetMonitorId, null, req.FenceId, req.X, req.Y);
+                fenceOwner.Value.Player.Send(new ExportFence { FenceId = req.FenceId });
+                break;
+
+            case ExportIconData data:
+                if (!data.Found || _pendingImport is not { } pi || pi.Path != data.Path) break;
+                if (_iconChildren.TryGetValue(pi.TargetMonitor, out var target1))
+                    target1.Player.Send(new ImportIcon { Path = data.Path, Name = data.Name, X = pi.X, Y = pi.Y });
+                _pendingImport = null;
+                break;
+
+            case ExportFenceData data:
+                if (!data.Found || data.Fence is null || _pendingImport is not { } pf || pf.FenceId != data.Fence.Id) break;
+                if (_iconChildren.TryGetValue(pf.TargetMonitor, out var target2))
+                    target2.Player.Send(new ImportFence { Fence = data.Fence, X = pf.X, Y = pf.Y });
+                _pendingImport = null;
+                break;
+
+            case IconOpened io:
+                Log.Debug("图标已打开：{Path}", io.Path);
+                break;
+
+            case Error err:
+                Log.Warning("图标层子进程错误[{Mon}]：{Msg}", monitorId, err.Message);
+                break;
         }
     }
 
-    /// <summary>M4：壁纸窗可见性同步后重锚 Z-order。</summary>
-    public void ReassertBottom(string monitorId) => BottomPair(monitorId);
+    private string? FindOwnerMonitor(string path)
+    {
+        foreach (var (mon, child) in _iconChildren)
+            if (child.OwnsPath(path)) return mon;
+        return null;
+    }
+
+    // ---------- 壁纸 API（设置窗口 / Governor 用） ----------
+
+    /// <summary>M4-T5：设置某屏壁纸：更新配置 + 即时应用 + 防抖落盘。</summary>
+    public void SetWallpaper(string monitorId, string path)
+    {
+        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+        _wallpapers.Add(new WallpaperConfig
+        {
+            MonitorId = monitorId,
+            Kind = WallpaperConfig.DetectKind(path),
+            Path = path
+        });
+        ApplyWallpaperTo(monitorId);
+        RequestSave();
+        Log.Information("壁纸已设置：{Mon} ← {Path}", monitorId, path);
+    }
+
+    /// <summary>M4-T5：移除某屏壁纸（回退系统壁纸）。</summary>
+    public void RemoveWallpaper(string monitorId)
+    {
+        _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
+        ApplyWallpaperTo(monitorId);
+        RequestSave();
+        Log.Information("壁纸已移除：{Mon}", monitorId);
+    }
+
+    /// <summary>Governor 暂停所有壁纸播放（IPC）。</summary>
+    public void PauseAllWallpapers()
+    {
+        foreach (var p in _wallpaperPlayers.Values) p.Send(new Pause());
+    }
+
+    /// <summary>Governor 恢复所有壁纸播放（IPC）。</summary>
+    public void ResumeAllWallpapers()
+    {
+        foreach (var p in _wallpaperPlayers.Values) p.Send(new Resume());
+    }
 
     /// <summary>M5：显示组只读视图（设置窗口用）。</summary>
     public IReadOnlyList<DisplayGroup> Groups => _displayGroups;
 
-    /// <summary>M5-UI：某屏生效壁纸（组优先 > 独立 > null），设置窗口预览缩略图用。</summary>
+    /// <summary>M5-UI：某屏生效壁纸（组优先 > 独立 > null）。</summary>
     public WallpaperConfig? GetEffectiveWallpaper(string monitorId) => ResolveWallpaper(monitorId).Cfg;
 
-    /// <summary>M5-UI：全局清除所有屏幕的选中态（跨屏单选核心）。</summary>
+    /// <summary>M5-UI：全局清除所有屏幕的选中态（广播 IPC）。</summary>
     public void ClearAllSelection()
     {
-        try
-        {
-            foreach (var win in _windows.Values)
-            {
-                win?.ClearLocalSelection();
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"ClearAllSelection error: {ex.Message}");
-        }
+        foreach (var c in _iconChildren.Values) c.Player.Send(new ClearSelection());
     }
 
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
     {
         _displayGroups = groups.ToList();
-        foreach (var mon in _windows.Keys.ToList()) ApplyWallpaperTo(mon);
+        foreach (var mon in _iconChildren.Keys.ToList()) ApplyWallpaperTo(mon);
         RequestSave();
     }
 
-    /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null（隐藏）。返回命中组供画布计算。</summary>
+    /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null。</summary>
     private (WallpaperConfig? Cfg, DisplayGroup? Group) ResolveWallpaper(string monitorId)
     {
         var g = _displayGroups.FirstOrDefault(g =>
@@ -277,7 +364,7 @@ public sealed class MultiMonitorHost
         return (_wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal)), null);
     }
 
-    /// <summary>M4（M6 IPC 化）：把壁纸配置通过 SetWallpaper 指令下发给子进程（无配置 → 空路径隐藏）。</summary>
+    /// <summary>M4（M6 IPC 化）：壁纸配置下发给子进程（无配置 → 空路径隐藏）。</summary>
     private void ApplyWallpaperTo(string monitorId)
     {
         if (!_wallpaperPlayers.TryGetValue(monitorId, out var player)) return;
@@ -303,7 +390,7 @@ public sealed class MultiMonitorHost
         Log.Information("壁纸分发(IPC): {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
             monitorId, cfg is not null, cfg?.Path ?? "(null)", canvas is not null, _wallpapers.Count, _displayGroups.Count);
 
-        var msg = new SetWallpaper
+        player.Send(new SetWallpaper
         {
             Path = cfg?.Path ?? "",
             Kind = cfg is null ? "image" : cfg.Kind switch
@@ -314,20 +401,19 @@ public sealed class MultiMonitorHost
             },
             CanvasW = canvas?.Width ?? 0,
             CanvasH = canvas?.Height ?? 0,
-            // 本屏在虚拟画布中的偏移（子进程负偏移放置，跨屏拼接对齐）
             CropX = canvas is not null && monRect is not null ? monRect.Left - canvas.Left : null,
             CropY = canvas is not null && monRect is not null ? monRect.Top - canvas.Top : null,
-        };
-        player.Send(msg);
+        });
     }
 
-    /// <summary>M3-T6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换，DisplayChangeWatcher 防抖后调，UI 线程）。
-    /// 流程：①现状落盘（防关窗丢布局）→ ②重枚举 → ③关消失屏的窗口（布局已在盘上，插回恢复）
-    /// → ④重算孤儿/归属 → ⑤存活屏重定位 → ⑥新增屏建窗加载布局 → ⑦刷新 PrimaryWindow。
-    /// 重建以「当前内存布局聚合快照」为新 config 基线（含孤儿），不重读盘（盘上可能是旧防抖值）。</summary>
+    // ---------- 拓扑重建 ----------
+
+    /// <summary>M3-T6/M6：拓扑变化重建（热插拔/分辨率/DPI/主屏切换）。
+    /// 流程：①现状落盘（子进程布局缓存）→ ②重枚举 → ③关消失屏子进程（布局已在盘上）
+    /// → ④重算孤儿/归属 → ⑤存活屏 SetPosition → ⑥新增屏启动子进程 + 恢复布局 → ⑦刷新主屏。</summary>
     public void RebuildToMatchTopology()
     {
-        // 1. 现状落盘（含孤儿）：关窗前确保所有布局进盘 + 进快照。
+        // 1. 现状落盘（含孤儿）。
         AppConfig snapshot;
         try
         {
@@ -344,20 +430,18 @@ public sealed class MultiMonitorHost
         }
 
         var monitors = MonitorEnumerator.Enumerate();
-        if (monitors.Count == 0) return; // 枚举异常/全灭：不动现有窗口，等下一次事件
+        if (monitors.Count == 0) return;
 
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var liveIds = new HashSet<string>(monitors.Select(m => m.PersistentId), StringComparer.Ordinal);
 
-        // 2. 关消失屏的窗口（其布局已含在 snapshot → 插回时按持久 ID 恢复）。
-        foreach (var goneId in _windows.Keys.Where(k => !liveIds.Contains(k)).ToList())
+        // 2. 关消失屏的子进程（其布局已含在 snapshot → 插回时按持久 ID 恢复）。
+        foreach (var goneId in _iconChildren.Keys.Where(k => !liveIds.Contains(k)).ToList())
         {
-            var w = _windows[goneId];
-            w.LayoutChanged -= RequestSave;
-            w.Close();
-            _windows.Remove(goneId);
-            if (_wallpaperPlayers.Remove(goneId, out var pGone)) pGone.Stop();
-            Log.Information("拓扑重建：显示器离线，关闭图标层窗口 {Id}", goneId);
+            _iconChildren.Remove(goneId, out var iconGone);
+            iconGone?.Player.Stop();
+            if (_wallpaperPlayers.Remove(goneId, out var wpGone)) wpGone.Stop();
+            Log.Information("拓扑重建：显示器离线，停止子进程 {Id}", goneId);
         }
 
         // 3. 以 snapshot 为新基线重算孤儿 + 每屏归属（孤儿集合整体重置）。
@@ -392,151 +476,90 @@ public sealed class MultiMonitorHost
             if (a is not null) myPositionsByMon[a].Add(p);
         }
 
-        // 4. 存活屏：仅重定位（本地坐标不换算）。壁纸子进程窗口已挂 WorkerW，位置走 IPC。
+        // 4. 存活屏：SetPosition（工作区/屏 rect 可能变化）。壁纸/图标子进程不重启。
         foreach (var m in monitors)
         {
-            if (_windows.TryGetValue(m.PersistentId, out var win)) win.RepositionTo(m);
-            if (_wallpaperPlayers.TryGetValue(m.PersistentId, out var pAlive))
-                pAlive.Send(new SetPosition { X = m.X, Y = m.Y, W = m.Width, H = m.Height });
+            var workPos = new SetPosition { X = m.WorkX, Y = m.WorkY, W = m.WorkWidth, H = m.WorkHeight };
+            if (_iconChildren.TryGetValue(m.PersistentId, out var alive))
+                alive.Player.Send(workPos);
+            if (_wallpaperPlayers.TryGetValue(m.PersistentId, out var wpAlive))
+                wpAlive.Send(new SetPosition { X = m.X, Y = m.Y, W = m.Width, H = m.Height });
         }
 
-        // 5. 新增屏：建窗 + 加载该屏布局（拔线插回 = 走这里原位恢复），并按归属补发桌面图标。
-        var newWindows = new List<IconLayerWindow>();
+        // 5. 新增屏：启动子进程（插回屏 = Fence/位置/壁纸按 config 原位恢复）+ 补发桌面图标。
+        var newMonitors = new List<string>();
         foreach (var m in monitors)
         {
-            if (_windows.ContainsKey(m.PersistentId)) continue;
-            var win = new IconLayerWindow(m, myFencesByMon[m.PersistentId], myPositionsByMon[m.PersistentId]);
-            win.Host = this;
-            win.LayoutChanged += RequestSave;
-            win.RequestBottom += () => BottomPair(m.PersistentId);
-            _windows[m.PersistentId] = win;
-            win.Show();
-            // M6：新屏壁纸子进程伴生（插回屏的壁纸按 config 原位恢复）。
+            if (_iconChildren.ContainsKey(m.PersistentId)) continue;
             StartWallpaperPlayer(m);
-            BottomPair(m.PersistentId);
-            newWindows.Add(win);
-            Log.Information("拓扑重建：显示器上线，新建图标层窗口 {Id}", m.PersistentId);
+            StartIconPlayer(m, myFencesByMon[m.PersistentId], myPositionsByMon[m.PersistentId]);
+            newMonitors.Add(m.PersistentId);
+            Log.Information("拓扑重建：显示器上线，启动子进程 {Id}", m.PersistentId);
         }
-        if (newWindows.Count > 0 && _lastAll.Count > 0)
+        if (newMonitors.Count > 0 && _lastAll.Count > 0)
         {
-            // Distribute 只投 target 窗口；存量图标在旧窗已有，FindOwner 命中旧窗 → 不会重复投。
-            Distribute(_lastAll, newWindows);
+            foreach (var mon in newMonitors)
+                if (_iconChildren.TryGetValue(mon, out var nc))
+                    nc.Player.Send(new SetIcons { Items = _lastAll.Select(ToDto).ToList() });
         }
 
-        // 6. 主屏可能切换：PrimaryWindow 指向当前主屏窗口（存量 _allItems/IsPrimary 不搬，backlog）。
-        var primaryId = monitors.FirstOrDefault(m => m.IsPrimary)?.PersistentId;
-        if (primaryId is not null && _windows.TryGetValue(primaryId, out var pw)) PrimaryWindow = pw;
-        else PrimaryWindow = _windows.Values.FirstOrDefault();
+        // 6. 主屏可能切换。
+        PrimaryMonitorId = monitors.FirstOrDefault(m => m.IsPrimary)?.PersistentId
+                           ?? _iconChildren.Keys.FirstOrDefault() ?? PrimaryMonitorId;
 
-        // 7. 布局已随 snapshot 落盘；重建本身不触发 RequestSave（无布局语义变化）。
-        Log.Information("拓扑重建完成：{Count} 个窗口，孤儿 Fence={OF} 位置={OP}",
-            _windows.Count, _orphanFences.Count, _orphanPositions.Count);
+        Log.Information("拓扑重建完成：{Count} 屏子进程，孤儿 Fence={OF} 位置={OP}",
+            _iconChildren.Count, _orphanFences.Count, _orphanPositions.Count);
     }
 
-    /// <summary>启动全量分发：按归属把快照切给各窗口（并记 _lastAll 供重建补发）。</summary>
+    // ---------- 图标分发（sync → IPC） ----------
+
+    /// <summary>启动全量分发：全量下发各屏（子进程内自行按 Fence 归属过滤散落区）。</summary>
     public void ApplyInitialSnapshot(IReadOnlyList<IconItem> all)
     {
         _lastAll.Clear();
         _lastAll.AddRange(all);
-        Distribute(all, _windows.Values);
+        foreach (var c in _iconChildren.Values)
+            c.Player.Send(new SetIcons { Items = all.Select(ToDto).ToList() });
     }
 
-    /// <summary>按归属分发到目标窗口：Fence/散落持有（FindOwner）→ 该窗；config 位置 hint → 该窗；
-    /// 都没有 → 主屏（新图标缺省）。孤儿 path 跳过（不渲染，插回恢复）。</summary>
-    private void Distribute(IReadOnlyList<IconItem> all, IEnumerable<IconLayerWindow> targets)
-    {
-        var groups = targets.ToDictionary(w => w, _ => new List<IconItem>());
-        foreach (var item in all)
-        {
-            if (_orphanPaths.Contains(item.FilePath)) continue;
-            var owner = FindOwner(item.FilePath);
-            IconLayerWindow target;
-            if (owner is not null) target = owner;
-            else if (_looseAssignHint.TryGetValue(item.FilePath, out var mon) && _windows.TryGetValue(mon, out var hw))
-                target = hw;
-            else target = PrimaryWindow!;
-            if (groups.TryGetValue(target, out var list)) list.Add(item);
-        }
-        foreach (var (win, items) in groups)
-            win.ApplySnapshot(items);
-    }
-
-    /// <summary>增量分发（sync.Changed）。
-    /// Removed 广播所有窗口（窗口无该 path 则 reconcile 自然 no-op，避免归属竞态）；
-    /// Added 按归属投单窗：Fence/散落持有窗，无归属落主屏。</summary>
+    /// <summary>增量分发（sync.Changed）。Removed 广播所有子进程（各自 reconcile no-op 防归属竞态）；
+    /// Added 路由到归属屏（缓存归属 → hint → 主屏）。孤儿 path 跳过。</summary>
     public void Dispatch(DesktopDiff diff)
     {
-        // 维护桌面全集快照（拓扑重建补发用）：倒序按 path 删，再追加 Added。
         if (diff.Removed.Count > 0)
         {
             var removedPaths = new HashSet<string>(diff.Removed.Select(r => r.FilePath), StringComparer.OrdinalIgnoreCase);
             for (int i = _lastAll.Count - 1; i >= 0; i--)
                 if (removedPaths.Contains(_lastAll[i].FilePath)) _lastAll.RemoveAt(i);
-        }
-        _lastAll.AddRange(diff.Added);
 
-        if (diff.Removed.Count > 0)
-        {
-            var removedOnly = new DesktopDiff(Array.Empty<IconItem>(), diff.Removed);
-            foreach (var w in _windows.Values) w.ApplyDiff(removedOnly);
+            var removedMsg = new ApplyDiff { Removed = diff.Removed.Select(r => r.FilePath).ToList() };
+            foreach (var c in _iconChildren.Values) c.Player.Send(removedMsg);
         }
 
         if (diff.Added.Count == 0) return;
-        var groups = new Dictionary<IconLayerWindow, List<IconItem>>();
+        _lastAll.AddRange(diff.Added);
+
+        var byMonitor = new Dictionary<string, List<IconDto>>(StringComparer.Ordinal);
         foreach (var item in diff.Added)
         {
             if (_orphanPaths.Contains(item.FilePath)) continue;
-            var owner = FindOwner(item.FilePath) ?? PrimaryWindow;
+            var owner = FindOwnerMonitor(item.FilePath);
+            if (owner is null && _looseAssignHint.TryGetValue(item.FilePath, out var hint)
+                && _iconChildren.ContainsKey(hint)) owner = hint;
+            owner ??= PrimaryMonitorId;
             if (owner is null) continue;
-            if (!groups.TryGetValue(owner, out var list)) groups[owner] = list = new List<IconItem>();
-            list.Add(item);
+            if (!byMonitor.TryGetValue(owner, out var list)) byMonitor[owner] = list = new List<IconDto>();
+            list.Add(ToDto(item));
         }
-        foreach (var (w, items) in groups)
-            w.ApplyDiff(new DesktopDiff(items, Array.Empty<IconItem>()));
-    }
-
-    // ---------- M3-T5：跨屏拖拽迁移 ----------
-
-    /// <summary>图标跨屏迁移：path 属 source 窗口（Fence 或散落），拖落在 target 空白 → 迁到 target 散落区 Drop 位置。
-    /// source==target 或无归属时 no-op（同窗场景由窗口内部 Drop 分支处理）。</summary>
-    public void TransferLoose(string path, IconLayerWindow target, System.Windows.Point pos)
-    {
-        var source = FindOwner(path);
-        if (source is null || source == target) return;
-        var item = source.ExportIcon(path);
-        if (item is null) return; // 文件已删等：不迁幽灵图标
-        target.ImportLoose(item, pos);
-        Log.Information("跨屏迁移图标：{Path} → {Monitor}", path, target.MonitorId);
-    }
-
-    /// <summary>Fence 跨屏迁移：source 静默移除 → target 重建（归属图标随迁，X/Y=Drop 位置）。
-    /// 同窗拖放 = 仅换位置（MoveFence）。</summary>
-    public void TransferFence(string fenceId, IconLayerWindow target, System.Windows.Point pos)
-    {
-        var source = _windows.Values.FirstOrDefault(w => w.ContainsFence(fenceId));
-        if (source is null) return;
-        if (source == target)
+        foreach (var (mon, items) in byMonitor)
         {
-            target.MoveFence(fenceId, pos);
-            return;
+            if (_iconChildren.TryGetValue(mon, out var c))
+                c.Player.Send(new ApplyDiff { Added = items });
         }
-        var cfg = source.ExportFence(fenceId);
-        if (cfg is null) return;
-        target.ImportFence(cfg with { X = pos.X, Y = pos.Y });
-        Log.Information("跨屏迁移 Fence：{Id}（{Title}）→ {Monitor}", fenceId, cfg.Title, target.MonitorId);
     }
 
-    /// <summary>运行时归属查询：哪个窗口持有该 path（Fence 归属或散落区）。</summary>
-    private IconLayerWindow? FindOwner(string path)
-    {
-        foreach (var w in _windows.Values)
-            if (w.ContainsFenced(path) || w.ContainsLoose(path)) return w;
-        return null;
-    }
+    // ---------- 聚合持久化 ----------
 
-    // ---------- 聚合持久化（T4） ----------
-
-    /// <summary>任一窗口布局变更 → 防抖聚合保存。</summary>
     private void RequestSave()
     {
         if (_savingDisabled) return;
@@ -546,17 +569,12 @@ public sealed class MultiMonitorHost
         }
     }
 
-    /// <summary>Timer 回调（ThreadPool）：Dispatcher.Invoke 聚合（读 UI 状态）→ Save（文件 IO）。</summary>
     private void OnSaveTimerElapsed()
     {
         if (_savingDisabled) return;
         try
         {
-            var dispatcher = Application.Current.Dispatcher;
-            AppConfig appConfig = dispatcher.CheckAccess()
-                ? BuildAggregatedConfig()
-                : (AppConfig)dispatcher.Invoke(new Func<AppConfig>(BuildAggregatedConfig));
-
+            var appConfig = BuildAggregatedConfig();
             lock (_saveLock)
             {
                 if (_savingDisabled) return;
@@ -565,23 +583,20 @@ public sealed class MultiMonitorHost
         }
         catch (Exception ex)
         {
-            // 持久化失败不崩 UI；下次变更再触发重试。
             Log.Warning(ex, "MultiMonitorHost 防抖保存失败");
         }
     }
 
-    /// <summary>聚合所有窗口布局（各窗口已打 MonitorId 戳）+ 孤儿配置（离线屏数据不丢）。UI 线程。</summary>
+    /// <summary>聚合所有子进程布局缓存 + 孤儿配置（离线屏数据不丢）。</summary>
     private AppConfig BuildAggregatedConfig()
     {
         var fences = new List<FenceConfig>(_orphanFences);
         var positions = new List<IconPosition>(_orphanPositions);
-        foreach (var w in _windows.Values)
+        foreach (var c in _iconChildren.Values)
         {
-            var (f, p) = w.BuildLayout();
-            fences.AddRange(f);
-            positions.AddRange(p);
+            fences.AddRange(c.Fences);
+            positions.AddRange(c.Positions);
         }
-        // M4/M5：壁纸配置 + 显示组整体带回（含离线屏孤儿——从不过滤）。
         return new AppConfig
         {
             Fences = fences,
@@ -600,10 +615,9 @@ public sealed class MultiMonitorHost
 
         try
         {
-            var appConfig = BuildAggregatedConfig(); // OnExit 在 UI 线程
             lock (_saveLock)
             {
-                _store.Save(appConfig);
+                _store.Save(BuildAggregatedConfig());
             }
         }
         catch (Exception ex)
@@ -612,17 +626,30 @@ public sealed class MultiMonitorHost
         }
     }
 
-    /// <summary>关闭所有窗口（OnExit，SaveAllNow 之后）。</summary>
+    /// <summary>停止所有子进程（OnExit，SaveAllNow 之后）。</summary>
     public void CloseAll()
     {
-        foreach (var w in _windows.Values)
-        {
-            w.LayoutChanged -= RequestSave;
-            w.Close();
-        }
-        _windows.Clear();
+        foreach (var c in _iconChildren.Values) c.Player.Stop();
+        _iconChildren.Clear();
         foreach (var p in _wallpaperPlayers.Values) p.Stop();
         _wallpaperPlayers.Clear();
-        _zWatchdog?.Stop();
     }
+
+    // ---------- DTO 映射 ----------
+
+    private static IconDto ToDto(IconItem i) =>
+        new() { Path = i.FilePath, Name = i.DisplayName, X = i.X, Y = i.Y };
+
+    internal static FenceDto ToDto(FenceConfig f) => new()
+    {
+        Id = f.Id, Title = f.Title, X = f.X, Y = f.Y, W = f.W, H = f.H, Collapsed = f.Folded,
+        IconPaths = f.IconFilePaths.ToList(),
+    };
+
+    internal static FenceConfig FromDto(FenceDto f) => new()
+    {
+        Id = f.Id, Title = f.Title, X = f.X, Y = f.Y, W = f.W, H = f.H, Folded = f.Collapsed,
+        MonitorId = "", // 缓存内归属由字典 key（monitorId）决定；BuildConfig 上报时子进程已打戳，这里作废重置
+        IconFilePaths = f.IconPaths.ToList(),
+    };
 }

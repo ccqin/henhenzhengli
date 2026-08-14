@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>DesktopManager.Player.Icons</AssemblyName>
+    <RootNamespace>DesktopManager.Player.Icons</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DesktopManager.Core\DesktopManager.Core.csproj" />
+    <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
+    <ProjectReference Include="..\DesktopManager.Native\DesktopManager.Native.csproj" />
+  </ItemGroup>
+
+</Project>

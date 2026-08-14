@@ -8,6 +8,11 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(LayoutChanged), "layoutChanged")]
 [JsonDerivedType(typeof(IconOpened), "iconOpened")]
 [JsonDerivedType(typeof(Error), "error")]
+[JsonDerivedType(typeof(TransferLooseReq), "transferLooseReq")]
+[JsonDerivedType(typeof(TransferFenceReq), "transferFenceReq")]
+[JsonDerivedType(typeof(ExportIconData), "exportIconData")]
+[JsonDerivedType(typeof(ExportFenceData), "exportFenceData")]
+[JsonDerivedType(typeof(ClearSelectionExcept), "clearSelectionExcept")]
 [JsonDerivedType(typeof(SetWallpaper), "setWallpaper")]
 [JsonDerivedType(typeof(SetIcons), "setIcons")]
 [JsonDerivedType(typeof(ApplyDiff), "applyDiff")]
@@ -17,6 +22,12 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(Show), "show")]
 [JsonDerivedType(typeof(SetPosition), "setPosition")]
 [JsonDerivedType(typeof(Shutdown), "shutdown")]
+[JsonDerivedType(typeof(ExportIcon), "exportIcon")]
+[JsonDerivedType(typeof(ImportIcon), "importIcon")]
+[JsonDerivedType(typeof(ExportFence), "exportFence")]
+[JsonDerivedType(typeof(ImportFence), "importFence")]
+[JsonDerivedType(typeof(MoveFencePos), "moveFencePos")]
+[JsonDerivedType(typeof(ClearSelection), "clearSelection")]
 public abstract record IpcMessage
 {
     /// <summary>协议版本。</summary>
@@ -48,6 +59,47 @@ public sealed record IconOpened : IpcMessage
 public sealed record Error : IpcMessage
 {
     public string Message { get; init; } = "";
+}
+
+/// <summary>图标层：跨屏图标迁移请求（目标窗查无归属 → 请主进程找源屏导出）。</summary>
+public sealed record TransferLooseReq : IpcMessage
+{
+    public string Path { get; init; } = "";
+    public string TargetMonitorId { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>图标层：Fence 跨屏迁移请求。</summary>
+public sealed record TransferFenceReq : IpcMessage
+{
+    public string FenceId { get; init; } = "";
+    public string TargetMonitorId { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>图标层：ExportIcon 的应答（源窗导出结果）。</summary>
+public sealed record ExportIconData : IpcMessage
+{
+    public bool Found { get; init; }
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>图标层：ExportFence 的应答。</summary>
+public sealed record ExportFenceData : IpcMessage
+{
+    public bool Found { get; init; }
+    public FenceDto? Fence { get; init; }
+}
+
+/// <summary>图标层：本屏将选中某图标 → 请求清除其余屏选中态。</summary>
+public sealed record ClearSelectionExcept : IpcMessage
+{
+    public string MonitorId { get; init; } = "";
 }
 
 // ---- 主进程 → 子进程 ----
@@ -105,32 +157,75 @@ public sealed record SetPosition : IpcMessage
 /// <summary>正常退出指令。</summary>
 public sealed record Shutdown : IpcMessage;
 
+// ---- 主进程 → 图标层子进程（跨屏迁移编排） ----
+
+/// <summary>源窗导出图标（主进程中转跨屏迁移）。</summary>
+public sealed record ExportIcon : IpcMessage
+{
+    public string Path { get; init; } = "";
+}
+
+/// <summary>目标窗导入图标（落到指定坐标）。</summary>
+public sealed record ImportIcon : IpcMessage
+{
+    public string Path { get; init; } = "";
+    public string Name { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>源窗导出 Fence。</summary>
+public sealed record ExportFence : IpcMessage
+{
+    public string FenceId { get; init; } = "";
+}
+
+/// <summary>目标窗导入 Fence（X/Y = Drop 位置）。</summary>
+public sealed record ImportFence : IpcMessage
+{
+    public FenceDto Fence { get; init; } = new();
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>同窗 Fence 拖动换位置。</summary>
+public sealed record MoveFencePos : IpcMessage
+{
+    public string FenceId { get; init; } = "";
+    public double X { get; init; }
+    public double Y { get; init; }
+}
+
+/// <summary>清除本屏选中态（跨屏单选广播，发往除请求屏外的所有图标层）。</summary>
+public sealed record ClearSelection : IpcMessage;
+
 // ---- 共享 DTO ----
 
 public sealed record FenceDto
 {
     public string Id { get; init; } = "";
     public string Title { get; init; } = "";
-    public int X { get; init; }
-    public int Y { get; init; }
-    public int W { get; init; }
-    public int H { get; init; }
+    public double X { get; init; }
+    public double Y { get; init; }
+    public double W { get; init; }
+    public double H { get; init; }
     public bool Collapsed { get; init; }
+    public List<string> IconPaths { get; init; } = [];
 }
 
 public sealed record IconDto
 {
     public string Path { get; init; } = "";
     public string Name { get; init; } = "";
-    public int X { get; init; }
-    public int Y { get; init; }
+    public double X { get; init; }
+    public double Y { get; init; }
     public string? FenceId { get; init; }
 }
 
 public sealed record IconPosDto
 {
     public string Path { get; init; } = "";
-    public int X { get; init; }
-    public int Y { get; init; }
+    public double X { get; init; }
+    public double Y { get; init; }
     public string? FenceId { get; init; }
 }

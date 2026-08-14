@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Windows.Data;
-using DesktopManager.App.Services;
+using DesktopManager.Player.Icons;
 
-namespace DesktopManager.App.Converters;
+namespace DesktopManager.Player.Icons;
 
 /// <summary>
 /// P0-T2：FilePath → WPF 图标 ImageSource 绑定转换器。

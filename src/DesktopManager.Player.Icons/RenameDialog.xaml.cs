@@ -1,9 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using DesktopManager.App.Services;
+using DesktopManager.Player.Icons;
 
-namespace DesktopManager.App.Windows;
+namespace DesktopManager.Player.Icons;
 
 /// <summary>M2-T5：自定义重命名输入对话框（TextBox + OK/Cancel，半透明风格）。
 /// WPF 无内置 InputBox；选自定义对话框（brief 推荐方案 a）以与 IconLayer/FenceControl 外观协调，

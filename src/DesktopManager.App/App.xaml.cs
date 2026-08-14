@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.IO;
 using System.Windows;
 using DesktopManager.App.Logging;
@@ -262,7 +262,7 @@ public partial class App : Application
                     try { _recoveryGuard.RestoreExplorer(); } catch { /* RestoreExplorer 也失败则不再升级 */ }
                 }
             }));
-            _shellWatcher.Attach(new System.Windows.Interop.WindowInteropHelper(_host.PrimaryWindow!).Handle);
+            _shellWatcher.Attach(CreateMessageHookHwnd());
 
             // 5. M3-T6：拓扑变化（热插拔/分辨率/DPI/主屏切换）→ 防抖后 host 重建窗口集。
             _displayWatcher = new DisplayChangeWatcher();
@@ -289,6 +289,15 @@ public partial class App : Application
             try { _recoveryGuard?.RestoreExplorer(); } catch { /* 已尽力 */ }
             throw;
         }
+    }
+
+    // M6：图标层已拆子进程，主进程用一个隐藏窗口承接 shell 消息（TaskbarCreated）。
+    private Window? _messageHookWindow;
+
+    private IntPtr CreateMessageHookHwnd()
+    {
+        _messageHookWindow = new Window { ShowInTaskbar = false, ShowActivated = false, Visibility = Visibility.Hidden };
+        return new System.Windows.Interop.WindowInteropHelper(_messageHookWindow).EnsureHandle();
     }
 
     private void OnSettings_Clicked(object sender, RoutedEventArgs e)

@@ -1,4 +1,4 @@
-namespace DesktopManager.App.Services;
+namespace DesktopManager.Player.Icons;
 
 /// <summary>M2 真机修复 Bug 2：宿主窗口若以 WS_EX_NOACTIVATE 运行（如 IconLayerWindow），所有子 TextBox
 /// 无法接收键盘输入（app 从不获取前台焦点）。需在弹出文本输入（FenceControl 标题编辑 / RenameDialog）前

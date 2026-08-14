@@ -8,15 +8,26 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using DesktopManager.App.Converters;
-using DesktopManager.App.Controls;
-using DesktopManager.App.Services;
+using DesktopManager.Player.Icons;
 using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
 using DesktopManager.Native;
 using Serilog;
 
-namespace DesktopManager.App.Windows;
+namespace DesktopManager.Player.Icons;
+
+/// <summary>M6：跨屏操作桥接口——子进程内通过 IPC 请主进程中转（跨屏拖拽迁移 / 全局清选中）。</summary>
+public interface ICrossScreenHost
+{
+    /// <summary>图标跨屏迁移：path 属其他屏（本窗查无）→ 主进程找源屏导出后导入本屏 pos 处。</summary>
+    void TransferLoose(string path, Point pos);
+
+    /// <summary>Fence 跨屏迁移（同窗分支由本窗 MoveFence 处理，不走这里）。</summary>
+    void TransferFence(string fenceId, Point pos);
+
+    /// <summary>清除所有屏选中态（本屏稍后自行重选，或本屏主动清除）。</summary>
+    void ClearAllSelection();
+}
 
 public partial class IconLayerWindow : Window, IInteractiveHost
 {
@@ -27,6 +38,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     
 
     private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_LAYERED = 0x00080000;
 
     private const int WM_SHOWWINDOW = 0x0018;
     private const int WM_WINDOWPOSCHANGING = 0x0046;
@@ -61,18 +73,14 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>布局变更（Fence/散落图标增删拖/折叠/标题等）→ host 防抖聚合保存。</summary>
     public event Action? LayoutChanged;
 
-    /// <summary>M4：本窗需要置底时通知 host（host 统一做「图标层置底 + 壁纸插其下」的 Z-order 编排，
-    /// 避免窗口各自 SendToBottom 与壁纸互踩）。无订阅者时自底（兼容 host 未接线场景）。</summary>
-    public event Action? RequestBottom;
 
-    /// <summary>M3-T5：多屏宿主（host.Attach 后注入），跨屏拖拽迁移用。</summary>
-    public MultiMonitorHost? Host { get; set; }
+    /// <summary>M6：跨屏协调桥（IPC 到主进程中转），Attach 后注入。</summary>
+    public ICrossScreenHost? Host { get; set; }
 
     private void AskBottom()
     {
-        if (RequestBottom is not null) { RequestBottom(); return; }
-        try { WindowInterop.SendToBottom(_hwnd); }
-        catch (System.ComponentModel.Win32Exception) { /* 窗口已无效则放弃 */ }
+        // M6：本窗口是 WorkerW 子窗口（主进程 SetParent），Z-order 由挂载顺序决定，
+        // 不再 SendToBottom（会把图标层压到壁纸子窗口之下）。
     }
 
     /// <summary>M3-T6：分辨率/排列变化后重定位到新工作区（图标本地坐标不换算——工作区变小时超界项容忍，backlog）。</summary>
@@ -146,11 +154,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // M3：铺本屏工作区（不含任务栏）。单屏时代用 SystemParameters.WorkArea（仅主屏），多屏逐屏定位。
             Left = _workArea.X; Top = _workArea.Y; Width = _workArea.W; Height = _workArea.H;
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            WindowInterop.MakeNonInteractiveTopmost(_hwnd); // 不点击穿透，可点图标
-            
-            // MakeNonInteractiveTopmost 用 SetExtendedStyle 覆盖了整个 ex style，需在其后补 TOOLWINDOW
+            // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
-            WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_TOOLWINDOW);
+            WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
             AskBottom();
             // 真机修复（图标层浮在文件夹窗口上面）：SourceInitialized 时窗口尚未真正 Show，
             // WPF 随后把新窗口插入 Z-order 顶部，上面的 SendToBottom 被覆盖。
@@ -205,6 +211,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         }
 
     }
+
+    /// <summary>M6 IPC：SetFences 指令入口（启动期加载本屏 Fence 子集）。</summary>
+    public void ApplyFences(IReadOnlyList<FenceConfig> fenceConfigs) => LoadFences(fenceConfigs);
 
     /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
     /// T7：注入共享 IconExtractor；订阅 ConfigChanged → 防抖 Save。返回新创建的控件供调用方做加载期补充操作。</summary>
@@ -639,7 +648,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // M3-T5：Fence 本体跨屏拖拽（payload "fence:<id>"，见 BeginFenceCrossScreenDrag）。
             if (path.StartsWith("fence:", StringComparison.Ordinal))
             {
-                Host?.TransferFence(path["fence:".Length..], this, pos);
+                var fid = path["fence:".Length..];
+                if (ContainsFence(fid)) MoveFence(fid, pos);   // 同窗拖动 = 仅换位置
+                else Host?.TransferFence(fid, pos);            // 跨屏 → 主进程中转
                 e.Handled = true;
                 return;
             }
@@ -667,7 +678,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 else
                 {
                     // M3-T5：跨屏图标拖拽——path 属另一窗口的 Fence/散落区（本窗查无）→ 经 host 迁移到本屏散落区。
-                    Host?.TransferLoose(path, this, pos);
+                    Host?.TransferLoose(path, pos);
                 }
             }
             e.Handled = true;

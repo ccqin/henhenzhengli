@@ -1,4 +1,4 @@
-﻿<Window x:Class="DesktopManager.App.Windows.IconLayerWindow"
+<Window x:Class="DesktopManager.Player.Icons.IconLayerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
