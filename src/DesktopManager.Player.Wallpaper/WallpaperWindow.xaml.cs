@@ -81,15 +81,12 @@ public partial class WallpaperWindow : Window
         Visibility = Visibility.Hidden;
     }
 
-    /// <summary>主进程 Show 指令：SetParent 完成后显示。</summary>
+    /// <summary>主进程 Show 指令：SetParent 完成后才显示（此前保持 Hidden，防 DWM 拒绝合成）。</summary>
     public void ShowLayer()
     {
         _pendingShow = true;
         if (_image.Source is not null || _video.Source is not null)
-        {
-            _pendingShow = false;
             Visibility = Visibility.Visible;
-        }
     }
 
     public void RepositionTo(int x, int y, int w, int h)
@@ -140,7 +137,8 @@ public partial class WallpaperWindow : Window
                     break;
             }
             // 无壁纸时 Hidden；有内容但主进程尚未发 Show 也保持 Hidden。
-            Visibility = _pendingShow || _image.Source is not null || _video.Source is not null
+            // 只在主进程已发 Show 且有内容时显示（SetParent 前显示 = DWM 黑屏，真机教训）。
+            Visibility = _pendingShow && (_image.Source is not null || _video.Source is not null)
                 ? Visibility.Visible
                 : Visibility.Hidden;
             ApplyPlacement();

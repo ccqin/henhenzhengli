@@ -28,7 +28,10 @@ public partial class App : Application
                 new Ready { Hwnd = new System.Windows.Interop.WindowInteropHelper(_window).Handle.ToInt64() });
             StartStdinLoop();
         };
-        _window.Show(); // Visibility=Hidden 由窗口内部控制，等主进程 Show 指令
+        // 关键：不能提前 Show——已显示的窗口被跨进程 SetParent 进 WorkerW 后 DWM 可能放弃
+        // 合成（真机：窗口 vis=True 但纯黑）。EnsureHandle 只创建 hwnd 不显示，等主进程
+        // SetParent 完成后发 Show 指令再显示。
+        new System.Windows.Interop.WindowInteropHelper(_window).EnsureHandle();
     }
 
     private void StartStdinLoop()
