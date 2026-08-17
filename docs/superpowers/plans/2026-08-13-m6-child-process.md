@@ -194,3 +194,29 @@ src/DesktopManager.Tests/
 - 交互体验：图标层子进程内自闭环大部分交互（双击/右键/拖拽/选中），跨屏通过主进程中转。
 - 崩溃安全不变式保持：主进程崩溃 → 子进程 stdin EOF → 子进程自动退出 → 桌面恢复。
 - explorer 重启：TaskbarCreated → 主进程重启子进程 + 重新 SetParent。
+
+---
+
+## 真机实施结论（2026-08-17 回写）
+
+M6 十个任务全部完成，但**核心架构假设在这台真机（Win11 + Intel A780 核显）被证伪**：
+
+### ❌ SetParent 桌面层方案在本机物理输出失效
+
+计划的核心机制「子进程窗口 SetParent 到 WorkerW，成为桌面子窗口免疫 Win+D」在本机**不可行**：
+- 窗口 vis=True、坐标对、PrintWindow/BitBlt/PrtSc 全部能"看到"内容（DWM 合成缓冲里有）
+- **但物理显示器不输出**（人眼验证），且 WorkerW 和 Progman 两种父窗口、硬/软渲染、DPI 对齐（PMv2）后依然如此
+- 顶层窗口实验（把壁纸窗临时拎成顶层 topmost）人眼立即可见 → 唯一被证实的可行形态是**顶层窗口**
+- 教训：**BitBlt/PrtSc 截图链不能作为"物理显示"的验证手段**（读的是合成缓冲）；必须人眼或显示器输出链取证。08-14 上午 2110f61 的"Progman 方案真机验证"也是被像素检测欺骗的
+
+### ✅ 终态架构（b5f1b1e）
+
+- **保留**：全部子进程架构（Player.Wallpaper / Player.Icons 独立进程、stdin/stdout JSON 行 IPC、Ready 上报 hwnd、崩溃 EOF 自杀、跨屏中转、聚合持久化、explorer 重启 ReattachAll）
+- **改变**：子进程窗口=**顶层 TOOLWINDOW + NOACTIVATE**（壁纸加 TRANSPARENT 穿透），不 SetParent
+- **Z 序**：主进程 BottomPair 编排（图标层置底 + 壁纸插其正下方）+ Z 看门狗（DetectOwnFloating 条件重锚，M5 验证路线）
+- **Win+D**：WH_KEYBOARD_LL 钩子回归（T10 曾移除；合成 Win+D 前后截图字节级相同验证通过）
+- PMv2 DPI manifest 保留（正确的 DPI 行为）；SWRENDER=1 软渲染诊断开关保留
+
+### 真机问题链完整记录（git log）
+
+死锁(32c586b) → 分发切分(a1853f2) → WorkerW 定位(f82641a) → 显示时序(701043b) → 色键透明(8ba9d2a) → PMv2(5e1d6c0) → **顶层终态(b5f1b1e)**
