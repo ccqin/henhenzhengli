@@ -175,12 +175,7 @@ public static class WindowInterop
         GetWindowRect(workerW, out var pr);
         int cx = monX - pr.Left, cy = monY - pr.Top;
         SetWindowPos(hWnd, IntPtr.Zero, cx, cy, monW, monH, SWP_NOACTIVATE);
-        // MPO 规避（真机）：跨进程 WorkerW 子窗口在部分显卡驱动下内容不进物理输出
-        // （截图/PrintWindow 都有内容但屏幕黑）。1px 尺寸往返抖动强制 DWM 重建合成平面。
-        const uint SWP_NOZORDER = 0x0004;
-        SetWindowPos(hWnd, IntPtr.Zero, cx, cy, monW - 1, monH - 1, SWP_NOACTIVATE | SWP_NOZORDER);
-        System.Threading.Thread.Sleep(50);
-        SetWindowPos(hWnd, IntPtr.Zero, cx, cy, monW, monH, SWP_NOACTIVATE | SWP_NOZORDER);
+
         long ex = GetExtendedStyle(hWnd);
         SetExtendedStyle(hWnd, ex | WS_EX_NOACTIVATE);
         if (colorKeyTransparent)
