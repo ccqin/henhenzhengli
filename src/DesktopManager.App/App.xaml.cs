@@ -225,6 +225,9 @@ public partial class App : Application
 
             // 6. M4-T4：播放治理（全屏/电池/锁屏暂停壁纸）。
             _governor = new PlaybackGovernor(_host);
+
+            // 7. Win+D 拦截（顶层窗口形态必需，见字段区注释）。
+            InstallWinDHook();
             
         }
         catch
@@ -237,6 +240,63 @@ public partial class App : Application
 
     // M6：图标层已拆子进程，主进程用一个隐藏窗口承接 shell 消息（TaskbarCreated）。
     private Window? _messageHookWindow;
+
+    // ---------- Win+D 拦截：低级键盘钩子 ----------
+    // M6 终态回归：WorkerW/Progman 子窗口形态在本机物理输出失效（2026-08-17 人眼验证），
+    // 窗口保持顶层 → 仍需钩子对抗 ShowDesktop（M5 验证路线）。子进程架构不变，只是窗口形态。
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int VK_LWIN = 0x5B;
+    private const int VK_RWIN = 0x5C;
+    private const int VK_D = 0x44;
+
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    private static IntPtr _keyboardHook = IntPtr.Zero;
+    private static readonly LowLevelKeyboardProc _keyboardProc = KeyboardHookCallback;
+
+    private static IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
+        {
+            int vkCode = Marshal.ReadInt32(lParam);
+            if (vkCode == VK_D &&
+                ((GetKeyState(VK_LWIN) & 0x8000) != 0 || (GetKeyState(VK_RWIN) & 0x8000) != 0))
+            {
+                return (IntPtr)1; // 吃掉 Win+D
+            }
+        }
+        return CallNextHookEx(_keyboardHook, nCode, wParam, lParam);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
+
+    private void InstallWinDHook()
+    {
+        if (_keyboardHook != IntPtr.Zero) return;
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        using var module = process.MainModule!;
+        _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardProc, GetModuleHandle(module.ModuleName), 0);
+    }
+
+    private void UninstallWinDHook()
+    {
+        if (_keyboardHook != IntPtr.Zero)
+        {
+            UnhookWindowsHookEx(_keyboardHook);
+            _keyboardHook = IntPtr.Zero;
+        }
+    }
 
     private IntPtr CreateMessageHookHwnd()
     {
@@ -273,6 +333,7 @@ public partial class App : Application
         _sync?.Dispose();
         _displayWatcher?.Dispose();
         _governor?.Dispose();
+        UninstallWinDHook();
         _host?.CloseAll(); // 关所有图标层窗口（恢复原生桌面前）
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。

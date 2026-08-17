@@ -13,6 +13,10 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 可选软渲染（诊断开关）：默认硬件渲染（M5 顶层形态验证过）。
+        if (Environment.GetEnvironmentVariable("DESKTOPMGR_SWRENDER") == "1")
+            System.Windows.Media.RenderOptions.ProcessRenderMode =
+                System.Windows.Interop.RenderMode.SoftwareOnly;
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 

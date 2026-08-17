@@ -64,11 +64,26 @@ public sealed class MultiMonitorHost
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
 
+    // M6 终态：Z 看门狗——顶层形态下子进程窗口可能被浮高（M4 真机教训），2s 条件检测重锚。
+    private System.Windows.Threading.DispatcherTimer? _zWatchdog;
+
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
         _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _zWatchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _zWatchdog.Tick += (_, _) =>
+        {
+            var own = _iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd)
+                .Concat(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd)).ToList();
+            if (own.Count > 0 && WindowInterop.DetectOwnFloating(own))
+            {
+                Log.Information("Z 看门狗：检测到浮高，重锚底序");
+                foreach (var mon in _iconChildren.Keys.ToList()) BottomPair(mon);
+            }
+        };
+        _zWatchdog.Start();
     }
 
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏启动壁纸 + 图标层子进程并挂 WorkerW。
@@ -86,7 +101,6 @@ public sealed class MultiMonitorHost
         _wallpaperPlayers.Clear();
         _orphanFences.Clear(); _orphanPositions.Clear(); _orphanPaths.Clear();
         _wallpapers.Clear(); _displayGroups = new List<DisplayGroup>();
-        DesktopLayerHost.Invalidate();
         lock (_saveLock) { if (!_savingDisabled) _store.Save(snapshot); }
         AttachCore(snapshot);
         if (_lastAll.Count > 0) ApplyInitialSnapshot(_lastAll);
@@ -167,11 +181,31 @@ public sealed class MultiMonitorHost
             _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
             player.Send(new Show());
             player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });
+            BottomPair(m.PersistentId); // 图标层置底 + 壁纸插其正下方
         }
         catch (Exception ex)
         {
             Log.Error(ex, "图标层子进程启动失败：{Mon}", m.PersistentId);
             if (_iconChildren.Remove(m.PersistentId, out var dead)) dead.Player.Dispose();
+        }
+    }
+
+    /// <summary>Z 序编排：图标层置底 + 壁纸窗插其正下方（M5 BottomPair， hwnd 来自子进程 Ready 上报）。</summary>
+    private void BottomPair(string monitorId)
+    {
+        try
+        {
+            if (_iconChildren.TryGetValue(monitorId, out var icon))
+            {
+                var iconH = (IntPtr)icon.Player.Hwnd;
+                WindowInterop.SendToBottom(iconH);
+                if (_wallpaperPlayers.TryGetValue(monitorId, out var wp))
+                    WindowInterop.PlaceBelow((IntPtr)wp.Hwnd, iconH);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "BottomPair 失败（{Mon}）", monitorId);
         }
     }
 
@@ -476,14 +510,19 @@ public sealed class MultiMonitorHost
             if (a is not null) myPositionsByMon[a].Add(p);
         }
 
-        // 4. 存活屏：SetPosition（工作区/屏 rect 可能变化）。壁纸/图标子进程不重启。
+        // 4. 存活屏：主进程直接 Win32 重定位（child 形态下 WPF Left/Top 会双偏移，位置纯 Win32 管）。
         foreach (var m in monitors)
         {
-            var workPos = new SetPosition { X = m.WorkX, Y = m.WorkY, W = m.WorkWidth, H = m.WorkHeight };
             if (_iconChildren.TryGetValue(m.PersistentId, out var alive))
-                alive.Player.Send(workPos);
+            {
+                DesktopLayerHost.RepositionChild(alive.Player.Hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight);
+                alive.Player.Send(new SetPosition { X = m.WorkX, Y = m.WorkY, W = m.WorkWidth, H = m.WorkHeight }); // 通知子进程更新 WPF 尺寸（内容布局用）
+            }
             if (_wallpaperPlayers.TryGetValue(m.PersistentId, out var wpAlive))
+            {
+                DesktopLayerHost.RepositionChild(wpAlive.Hwnd, m.X, m.Y, m.Width, m.Height);
                 wpAlive.Send(new SetPosition { X = m.X, Y = m.Y, W = m.Width, H = m.Height });
+            }
         }
 
         // 5. 新增屏：启动子进程（插回屏 = Fence/位置/壁纸按 config 原位恢复）+ 补发桌面图标。

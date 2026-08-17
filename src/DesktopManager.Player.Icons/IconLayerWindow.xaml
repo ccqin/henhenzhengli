@@ -2,14 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="IconLayer" WindowStyle="None" ResizeMode="NoResize"
-        ShowInTaskbar="False" ShowActivated="False" Background="#000000">
+        ShowInTaskbar="False" ShowActivated="False" AllowsTransparency="True" Background="#01000000">
     <!-- 根画布（P0 R1 混合 Canvas）：子元素有序两类——
          [0] LooseItemsControl（底层 Z-order；散落图标数据驱动渲染；Canvas.Left/Top=0 占满）
          [1..] FenceControl...（上层 Z-order；CreateFence 一次 Add，持久驻留，不随 SetIcons 重 Add）。
          AllowDrop=true 接收从 Fence 内容区拖出到空白的图标（data=FilePath）。
          Background=Transparent：null 背景的 Canvas 不响应空白 hit-test，必须非 null 才能接收双击空白。 -->
     <Canvas x:Name="IconCanvas"
-            Background="#000000"
+            Background="Transparent"
             AllowDrop="True"
             MouseLeftButtonDown="IconCanvas_MouseLeftButtonDown"
             DragOver="IconCanvas_DragOver"

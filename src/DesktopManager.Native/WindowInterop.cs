@@ -11,7 +11,9 @@ public static class WindowInterop
     private const int WS_EX_LAYERED = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_NOACTIVATE = 0x08000000;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
     private static readonly IntPtr HWND_BOTTOM = new(1);
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
     private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
 
     // 64-bit safe variants (x64 用 PtrW，x86 用 W)
@@ -162,33 +164,52 @@ public static class WindowInterop
         return progman;
     }
 
-    /// <summary>M6：把子进程窗口 SetParent 到 <paramref name="workerW"/>（WorkerW/Progman）成为桌面子窗口。
-    /// 桌面子窗口天然免疫 Win+D（ShowDesktop 只作用于顶层窗口）。坐标转为父窗客户区相对坐标。
-    /// colorKeyTransparent：图标层用——WPF AllowsTransparency 窗口做 WorkerW 子窗口不被 DWM 合成（真机），
-    /// 改普通不透明窗口 + 色键（纯黑被抠成透明）。</summary>
-    public static void AttachToDesktop(IntPtr hWnd, IntPtr workerW, int monX, int monY, int monW, int monH,
-        bool colorKeyTransparent = false)
+    /// <summary>M6 终态（真机结论 2026-08-17）：本机任何 SetParent 进桌面层（WorkerW/Progman）的窗口
+    /// 都不进物理输出（截图链有内容但显示器不显示，人眼验证；顶层窗口正常）→ 放弃子窗口形态，
+    /// 子进程窗口保持顶层 + TOOLWINDOW（无任务栏）+ NOACTIVATE，Z 序由主进程编排（M5 验证路线）。</summary>
+    public static void AttachTopLevel(IntPtr hWnd, int monX, int monY, int monW, int monH, bool iconLayer = false)
     {
-        SetParent(hWnd, workerW);
-        long st = GetStyle(hWnd);
-        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
-        GetWindowRect(workerW, out var pr);
-        int cx = monX - pr.Left, cy = monY - pr.Top;
-        SetWindowPos(hWnd, IntPtr.Zero, cx, cy, monW, monH, SWP_NOACTIVATE);
-
         long ex = GetExtendedStyle(hWnd);
-        SetExtendedStyle(hWnd, ex | WS_EX_NOACTIVATE);
-        if (colorKeyTransparent)
-        {
-            SetExtendedStyle(hWnd, GetExtendedStyle(hWnd) | WS_EX_LAYERED);
-            SetLayeredWindowAttributes(hWnd, 0, 255, LWA_COLORKEY);
-        }
+        ex |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
+        SetExtendedStyle(hWnd, ex);
+        SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOACTIVATE);
     }
 
-    private const uint LWA_COLORKEY = 1;
+    /// <summary>M6：把子进程窗口 SetParent 到 Progman 成为桌面子窗口。
+    /// 真机结论（2026-08）：WorkerW 方案在本机物理输出失效（DWM 截图缓冲有内容但显示器不输出，
+    /// 顶层窗口实验证实渲染链正常）→ 弃用 WorkerW，复刻 2110f61 真机验证过的 Progman 方案：
+    /// 壁纸 = HWND_BOTTOM + 去 LAYERED + TRANSPARENT 点击穿透；图标层 = HWND_TOPMOST 压 DefView + 去 LAYERED。</summary>
+    public static void AttachToDesktop(IntPtr hWnd, int monX, int monY, int monW, int monH,
+        bool iconLayer = false)
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(0, "Progman not found");
+        SetParent(hWnd, progman);
+        long st = GetStyle(hWnd);
+        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
+        GetWindowRect(progman, out var pr);
+        int cx = monX - pr.Left, cy = monY - pr.Top;
+        var after = iconLayer ? HWND_TOPMOST : HWND_BOTTOM;
+        SetWindowPos(hWnd, after, cx, cy, monW, monH, iconLayer ? SWP_NOACTIVATE : 0);
+        long ex = GetExtendedStyle(hWnd);
+        // 去 WS_EX_LAYERED：child 形态下 Layered 表面渲染失效（2110f61 真机教训）。
+        ex &= ~WS_EX_LAYERED;
+        ex |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
+        SetExtendedStyle(hWnd, ex);
+    }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte bAlpha, uint dwFlags);
+    /// <summary>顶层形态重定位（拓扑变化）。屏幕坐标直接定位。</summary>
+    public static void RepositionDesktopChild(IntPtr hWnd, int monX, int monY, int monW, int monH)
+    {
+        const uint SWP_NOZORDER = 0x0004;
+        SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    /// <summary>取桌面子窗口挂载目标 Progman（跨进程 SetParent 用）。</summary>
+    public static IntPtr GetProgman() => FindWindow("Progman", null);
+
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
     [DllImport("user32.dll")]
