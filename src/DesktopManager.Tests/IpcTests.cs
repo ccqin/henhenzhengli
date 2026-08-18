@@ -120,4 +120,24 @@ public class IpcTests
         var second = IpcReader.ReadAsync(reader).Result;
         Assert.Null(second);
     }
+
+    [Fact]
+    public void SetMenu_RoundTrip_WithCustomItems()
+    {
+        var msg = new SetMenu
+        {
+            ShowOpen = false, ShowRename = true, ShowDelete = true, ShowLocate = true, ShowSystemMenu = true,
+            CustomItems =
+            [
+                new CustomItemDto { Name = "用记事本打开", Command = "notepad \"{path}\"", Extensions = "" },
+                new CustomItemDto { Name = "图片上传", Command = "up \"{path}\"", Extensions = "jpg,png" },
+            ],
+        };
+        var (back, json) = RoundTrip(msg);
+        var m = Assert.IsType<SetMenu>(back);
+        Assert.False(m.ShowOpen);
+        Assert.Equal(2, m.CustomItems.Count);
+        Assert.Equal("notepad \"{path}\"", m.CustomItems[0].Command);
+        Assert.Contains("setMenu", json);
+    }
 }

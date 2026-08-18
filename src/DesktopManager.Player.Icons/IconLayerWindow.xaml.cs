@@ -162,6 +162,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     // 菜单配置（主进程 SetMenu 下发）；右键时动态构建（配置变更即时生效）。
     internal MenuCfg Menu { get; private set; } = new();
 
+    /// <summary>诊断：菜单配置到达子进程（计数）。</summary>
+    internal static event Action<int>? MenuApplied;
+
     internal sealed class MenuCfg
     {
         public bool ShowOpen = true, ShowRename = true, ShowDelete = true, ShowLocate = true, ShowSystemMenu = true;
@@ -170,6 +173,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     internal void ApplyMenu(DIpc.SetMenu m)
     {
+        MenuApplied?.Invoke(m.CustomItems.Count);  // 诊断（静态事件）：主进程日志可见子进程确实收到
         Menu = new MenuCfg
         {
             ShowOpen = m.ShowOpen, ShowRename = m.ShowRename, ShowDelete = m.ShowDelete,
@@ -240,7 +244,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         {
             var expanded = template
                 .Replace("{path}", filePath)
-                .Replace("{dir}", System.IO.Path.GetDirectoryName(filePath) ?? "");
+                .Replace("{dir}", System.IO.Path.GetDirectoryName(filePath) ?? "")
+                .Replace('“', '"').Replace('”', '"')  // 全角引号归一化（中文输入法常见）
+                .Replace('‘', ''').Replace('’', ''');
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c {expanded}")
             {
                 UseShellExecute = true,

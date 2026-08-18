@@ -3,8 +3,9 @@ using System.Runtime.InteropServices;
 namespace DesktopManager.Player.Icons;
 
 /// <summary>系统 shell 右键菜单（资源管理器同款：打开方式/第三方扩展/属性）。
-/// SHParseDisplayName → IContextMenu → QueryContextMenu 生成 HMENU → TrackPopupMenuEx → InvokeCommand。
-/// 调用线程须为窗口线程（弹出模态菜单）。</summary>
+/// 经典路径：ILCreateFromPath → SHBindToParent 得父 IShellFolder + 子 pidl →
+/// GetUIObjectOf(IContextMenu) → QueryContextMenu 生成 HMENU → TrackPopupMenuEx → InvokeCommand。
+/// （此前用 IShellItem.BindToHandler 版本因 vtable 声明错位拿到空菜单，已废弃。）</summary>
 internal static class SystemContextMenu
 {
     [ComImport, Guid("000214E4-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -19,18 +20,38 @@ internal static class SystemContextMenu
     private struct CMINVOKECOMMANDINFO
     {
         public int cbSize;
-        public IntPtr lpVerb;     // MAKEINTRESOURCE 偏移（cmdId-1）
+        public IntPtr lpVerb;     // 命令偏移（cmdId-1）
         public IntPtr lpDirectory;
         public int nShow;
         public IntPtr dwHotKey;
         public IntPtr hIcon;
     }
 
+    // IShellFolder vtable（继承 IUnknown 3 方法后）：ParseDisplayName, EnumObjects, BindToObject,
+    // BindToStorage, CompareIDs, CreateViewObject, GetAttributesOf, GetUIObjectOf（本类只调用它）。
+    [ComImport, Guid("000214E6-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellFolder
+    {
+        [PreserveSig] int ParseDisplayName(IntPtr hwnd, IntPtr pbc, [MarshalAs(UnmanagedType.LPWStr)] string pszDisplayName,
+            IntPtr pchEaten, out IntPtr ppidl, IntPtr pdwAttributes);
+        [PreserveSig] int EnumObjects(IntPtr hwnd, int grfFlags, out IntPtr penumList);
+        [PreserveSig] int BindToObject(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int BindToStorage(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int CompareIDs(IntPtr lParam, IntPtr pidl1, IntPtr pidl2);
+        [PreserveSig] int CreateViewObject(IntPtr hwndOwner, ref Guid riid, out IntPtr ppv);
+        [PreserveSig] int GetAttributesOf(uint cidl, IntPtr apidl, ref uint rgfInOut);
+        [PreserveSig] int GetUIObjectOf(IntPtr hwndOwner, uint cidl, [In] IntPtr[] apidl, ref Guid riid,
+            IntPtr pvReserved, out IntPtr ppv);
+    }
+
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern int SHParseDisplayName(string pszName, IntPtr pbc, out IntPtr ppidl, uint sfgaoIn, out uint psfgaoOut);
+    private static extern IntPtr ILCreateFromPath(string pszPath);
 
     [DllImport("shell32.dll")]
-    private static extern int SHCreateItemFromParsingName(string path, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+    private static extern int SHBindToParent(IntPtr pidl, ref Guid riid, out IShellFolder ppv, out IntPtr ppidlLast);
+
+    [DllImport("shell32.dll")]
+    private static extern void ILFree(IntPtr pidl);
 
     [DllImport("user32.dll")]
     private static extern IntPtr CreatePopupMenu();
@@ -47,30 +68,25 @@ internal static class SystemContextMenu
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
 
-    private static Guid IID_IShellItem => new("43826D1E-E718-42EE-BC55-A1E261C37BFE");
-    private static Guid IID_IContextMenu => new("000214E4-0000-0000-C000-000000000046");
-
-    private const uint TPM_RETURNCMD = 0x0100;
-    private const uint TPM_RIGHTBUTTON = 0x0002;
-    private const uint CMF_NORMAL = 0;
+    private static readonly Guid IID_IContextMenu = new("000214E4-0000-0000-C000-000000000046");
+    private static readonly Guid IID_IShellFolder = new("000214E6-0000-0000-C000-000000000046");
+    private const uint TPM_RETURNCMD = 0x0100, TPM_RIGHTBUTTON = 0x0002, CMF_NORMAL = 0;
 
     /// <summary>在鼠标位置弹出系统菜单并执行选中命令。返回是否成功弹出。</summary>
     public static bool Show(IntPtr ownerHwnd, string filePath)
     {
-        if (SHParseDisplayName(filePath, IntPtr.Zero, out var pidl, 0, out _) != 0 || pidl == IntPtr.Zero)
-            return false;
+        var pidlFull = ILCreateFromPath(filePath);
+        if (pidlFull == IntPtr.Zero) return false;
         try
         {
-            // 拿文件 IShellItem → BindToHandler(IContextMenu)
-            var iidItem = IID_IShellItem;
-            if (SHCreateItemFromParsingName(filePath, IntPtr.Zero, ref iidItem, out var item) != 0)
-                return false;
+            var iidFolder = IID_IShellFolder;
+            if (SHBindToParent(pidlFull, ref iidFolder, out var psf, out var pidlLast) != 0) return false;
             try
             {
-                var bh = (IShellItemBindToHandler)Marshal.GetObjectForIUnknown(item);
                 var iidCm = IID_IContextMenu;
-                bh.BindToHandler(IntPtr.Zero, ref iidCm, ref iidCm, out var cmPtr);
-                if (cmPtr == IntPtr.Zero) return false;
+                var apidl = new IntPtr[1] { pidlLast };
+                if (psf.GetUIObjectOf(ownerHwnd, 1, apidl, ref iidCm, IntPtr.Zero, out var cmPtr) != 0 || cmPtr == IntPtr.Zero)
+                    return false;
                 var cm = (IContextMenu)Marshal.GetObjectForIUnknown(cmPtr);
                 try
                 {
@@ -80,8 +96,7 @@ internal static class SystemContextMenu
                     {
                         if (cm.QueryContextMenu(hmenu, 0, 1, 0x7FFF, CMF_NORMAL) < 0) return false;
                         GetCursorPos(out var pt);
-                        var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                            pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
+                        var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
                         if (cmd == 0) return true; // 用户取消
                         var info = new CMINVOKECOMMANDINFO
                         {
@@ -96,14 +111,8 @@ internal static class SystemContextMenu
                 }
                 finally { Marshal.ReleaseComObject(cm); }
             }
-            finally { Marshal.Release(item); }
+            finally { Marshal.ReleaseComObject(psf); }
         }
-        finally { Marshal.FreeCoTaskMem(pidl); }
-    }
-
-    [ComImport, Guid("BC8FAB30-492F-11D1-8E1D-00A0C92C9D5D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IShellItemBindToHandler
-    {
-        void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+        finally { ILFree(pidlFull); }
     }
 }
