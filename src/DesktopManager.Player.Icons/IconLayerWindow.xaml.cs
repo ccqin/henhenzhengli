@@ -187,6 +187,19 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // M3：铺本屏工作区（不含任务栏）。单屏时代用 SystemParameters.WorkArea（仅主屏），多屏逐屏定位。
             Left = _workArea.X; Top = _workArea.Y; Width = _workArea.W; Height = _workArea.H;
             _hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            // M6 修闪屏：WM_MOUSEACTIVATE 返回 MA_NOACTIVATE——点击本窗口不提升 Z 序
+            // （NOACTIVATE 只阻止抢焦点不阻止 Z 提升；跨屏点击曾把图标层抬高 → 看门狗重锚 → DWM 重组合闪屏）。
+            // 文本输入态（BeginInput）例外：需要激活才能打字。
+            System.Windows.Interop.HwndSource.FromHwnd(_hwnd)?.AddHook((h, msg, w, l, ref handled) =>
+            {
+                const int WM_MOUSEACTIVATE = 0x0021;
+                if (msg == WM_MOUSEACTIVATE && !_inputActive)
+                {
+                    handled = true;
+                    return new IntPtr(3); // MA_NOACTIVATE：不激活（保留鼠标消息正常传递）
+                }
+                return IntPtr.Zero;
+            });
             // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
             WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
