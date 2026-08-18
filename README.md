@@ -104,16 +104,14 @@ Lively 等壁纸软件的通用方案是把渲染窗口 `SetParent` 进桌面窗
 启动后**会接管 explorer 桌面图标**（隐藏原生图标、由 app 的图标层接管显示），正常托盘退出会恢复。
 Win11 真机验收结论（已通过）：原生图标立即隐藏（直接隐藏 SysListView32）、图标层在文件夹窗口下层（桌面层 Z-order）、重启 explorer 只重启一次且继续接管（单实例 Mutex 断环）。
 
-**如果 app 异常退出导致桌面图标没恢复**（RunOnce 自清理会在下次登录自动修复，也可手动）：
+**如果 app 异常退出导致桌面图标没恢复**：正常情况无需手动处理——RunOnce 自清理会在下次登录时自动修复，或直接再启动一次 app（接管状态自动恢复）。手动恢复用一行命令：
 
 ```bash
+# 推荐：一键恢复 + 自动刷新桌面
+DesktopManager.App.exe --restore-icons
+
+# 最后兜底（极端情况，手动清注册表）
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce" /v DM_RestoreIcons /f
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideIcons /t REG_DWORD /d 0 /f
-```
-
-**如果 app 异常退出导致桌面图标没恢复**，临时手动恢复（M2 会加自清理机制彻底解决）：
-
-```bash
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideIcons /t REG_DWORD /d 0 /f
 ```
 
