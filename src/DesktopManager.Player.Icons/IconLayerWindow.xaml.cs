@@ -854,9 +854,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>M5-UI：单选高亮（先全局清除，再选中自己）。</summary>
     private void SelectLoose(IconItem icon)
     {
-        // 先全局清除所有屏幕的选中
+        // 单选：先清本屏全部选中（含旧选中），再请其他屏清（IPC），最后选中新图标。
+        // M6 修复：本屏自清不能依赖主进程回发（回发会清掉刚选中的新图标，竞态）。
+        ClearLocalSelection();
         Host?.ClearAllSelection();
-        // 再选中当前图标
         icon.IsSelected = true;
     }
 

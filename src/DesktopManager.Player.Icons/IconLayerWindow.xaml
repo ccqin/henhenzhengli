@@ -51,6 +51,7 @@
                          hover 圆角白底 + 选中 Win11 圆角蓝选框（替代整块方底）。 -->
                     <Border CornerRadius="6"
                             Padding="4,2"
+                            Width="{Binding LabelWidth, RelativeSource={RelativeSource AncestorType=Window}}"
                             Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
                         <Border.Style>
                             <Style TargetType="Border">
@@ -65,8 +66,9 @@
                                 </Style.Triggers>
                             </Style>
                         </Border.Style>
-                        <StackPanel>
-                            <Image Width="{Binding IconSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                        <StackPanel HorizontalAlignment="Center">
+                            <Image HorizontalAlignment="Center"
+                                   Width="{Binding IconSize, RelativeSource={RelativeSource AncestorType=Window}}"
                                    Height="{Binding IconSize, RelativeSource={RelativeSource AncestorType=Window}}"
                                    Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
                                    Source="{Binding FilePath, Converter={StaticResource FilePathToIconConverter}}"/>
