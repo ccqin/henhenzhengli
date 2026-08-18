@@ -12,12 +12,13 @@
          原先仅 ContentArea（WrapPanel）接收 Drop：空盒 MinHeight=20，折叠态 Collapsed，命中标题栏/边框时
          事件 bubble 到 IconCanvas_Drop（无 owner → no-op）。根级 Drop handler 调 AddIcon，e.Handled 阻止冒泡。 -->
     <!-- 收纳盒：半透明黑底圆角，淡白描边。MinWidth/MinHeight 保证折叠/空盒仍可见可点 -->
-    <Border CornerRadius="6"
+    <Border x:Name="FenceShell" CornerRadius="6"
             Background="#80000000"
             BorderBrush="#40FFFFFF"
             BorderThickness="1"
             Padding="6"
-            MinWidth="120">
+            MinWidth="120"
+            MouseEnter="FenceShell_MouseEnter" MouseLeave="FenceShell_MouseLeave">
         <!-- Grid 承载主 StackPanel（边缘 resize 改由 UserControl 根的鼠标事件处理，见 code-behind）。 -->
         <Grid>
             <StackPanel>

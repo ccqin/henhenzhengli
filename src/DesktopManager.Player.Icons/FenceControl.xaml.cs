@@ -170,6 +170,11 @@ public partial class FenceControl : UserControl
     /// <summary>构造内容区小图标项：StackPanel(28x28 Image + 文件名 TextBlock)，支持左键拖出（移动阈值 → DoDragDrop）。
     /// M2 完善：原先仅 Image（文件名只能 hover 看），现加 TextBlock 显示名字，参考散落图标样式但更紧凑。
     /// 拖出逻辑挂在 StackPanel 上（与散落图标 panel 对称），保证拖出仍工作。</summary>
+    private void FenceShell_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e) =>
+        FenceShell.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0x90, 0xFF, 0xFF, 0xFF));
+    private void FenceShell_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) =>
+        FenceShell.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
+
     private static int IconSizeOf(DependencyObject from)
     {
         var w = Window.GetWindow(from);
@@ -179,38 +184,63 @@ public partial class FenceControl : UserControl
     private FrameworkElement BuildContentIcon(string filePath)
     {
         var name = Path.GetFileName(filePath);
+        // M6 美化：与散落图标同构——外层圆角 Border（hover 白底/选中蓝底），
+        // 标签跟随窗口 LabelStyle（shadow=文字阴影 / pill=胶囊底），尺寸跟随 IconSize 档（盒内小一档）。
+        int isz = IconSizeOf(this);
+        var win = Window.GetWindow(this) as IconLayerWindow;
+        bool shadowStyle = win?.LabelStyle != "pill";
+
         var img = new Image
         {
-            Width = 28,
-            Height = 28,
+            Width = isz,
+            Height = isz,
             Source = _icons.GetIcon(filePath),
             Stretch = Stretch.Uniform,
             VerticalAlignment = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Center
         };
-        // TextBlock：白字小字 + 半透明黑底，参考散落图标 Color.FromArgb(140,0,0,0) + Padding(2,0,2,0)。
-        // 紧凑布局：MaxWidth=60 单行截断（CharacterEllipsis），完整名走 ToolTip 兜底。
-        var label = new TextBlock
+        System.Windows.Media.RenderOptions.SetBitmapScalingMode(img, System.Windows.Media.BitmapScalingMode.HighQuality);
+
+        var labelText = new TextBlock
         {
             Text = name,
-            FontSize = 10,
-            MaxWidth = 60,
+            FontSize = isz >= 44 ? 11 : 10,
+            MaxWidth = isz + 18,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextAlignment = TextAlignment.Center,
             Foreground = Brushes.White,
-            Background = new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)),
-            Padding = new Thickness(2, 0, 2, 0),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 2, 0, 0)
         };
-        var panel = new StackPanel
+        var labelHost = new Border
         {
-            Width = 64,
-            Margin = new Thickness(2),
-            ToolTip = name
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(6, 2, 6, 2),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 3, 0, 0)
         };
+        if (shadowStyle)
+            labelText.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 4, ShadowDepth = 0, Opacity = 0.9 };
+        else
+            labelHost.Background = new SolidColorBrush(Color.FromArgb(102, 0, 0, 0)); // #66
+        labelHost.Child = labelText;
+
+        var panel = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
         panel.Children.Add(img);
-        panel.Children.Add(label);
+        panel.Children.Add(labelHost);
+
+        // 外层圆角壳（hover/选中态载体），替换旧的 StackPanel 直染背景
+        var cell = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(4, 2, 4, 2),
+            Width = isz + 34,
+            Margin = new Thickness(2),
+            Background = Brushes.Transparent,
+            ToolTip = name,
+            Child = panel
+        };
+        cell.MouseEnter += (_, _) => { if (!ReferenceEquals(_selectedCell, cell)) cell.Background = HoverBrush; };
+        cell.MouseLeave += (_, _) => { if (!ReferenceEquals(_selectedCell, cell)) cell.Background = Brushes.Transparent; };
         // 拖出逻辑：挂 panel（与散落图标对称），左键按下 arm；MouseMove 超阈值 → DoDragDrop（data=FilePath）。
         panel.MouseLeftButtonDown += (_, e) =>
         {
@@ -228,7 +258,7 @@ public partial class FenceControl : UserControl
             _contentDragOrigin = e.GetPosition(this);
             // 跨区单选：先清散落图标选中（及本盒旧选中），再高亮本图标
             (Window.GetWindow(this) as IconLayerWindow)?.ClearAllSelection();
-            SelectIcon(panel);
+            SelectIcon(cell, panel);
             e.Handled = true;
         };
         panel.MouseMove += (_, e) =>
@@ -255,24 +285,31 @@ public partial class FenceControl : UserControl
             _contentDragArmed = false;
             _contentDragPath = null;
         };
-        return panel;
+        return cell;
     }
 
     // ---------- M5-UI：盒内图标选中 ----------
 
-    private void SelectIcon(StackPanel panel)
+    // M6 美化：hover/选中画在外层圆角壳（cell）；_selectedIconPanel 仍持 panel 做身份比较。
+    private static readonly Brush HoverBrush = new SolidColorBrush(Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+    private Border? _selectedCell;
+
+    private void SelectIcon(Border cell, StackPanel panel)
     {
-        if (_selectedIconPanel is not null && !ReferenceEquals(_selectedIconPanel, panel))
-            _selectedIconPanel.Background = Brushes.Transparent;
+        if (_selectedCell is not null && !ReferenceEquals(_selectedCell, cell))
+            _selectedCell.Background = Brushes.Transparent;
+        _selectedCell = cell;
         _selectedIconPanel = panel;
-        panel.Background = SelectedBrush;
+        cell.Background = SelectedBrush;
     }
 
     /// <summary>清除盒内图标选中态（点盒子空白/图标增删时调）。</summary>
     public void ClearIconSelection()
     {
         if (_selectedIconPanel is not null) _selectedIconPanel.Background = Brushes.Transparent;
+        if (_selectedCell is not null) _selectedCell.Background = Brushes.Transparent;
         _selectedIconPanel = null;
+        _selectedCell = null;
     }
 
     private static void Open(string path)
