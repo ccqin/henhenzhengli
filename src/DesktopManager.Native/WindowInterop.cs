@@ -332,6 +332,15 @@ public static class WindowInterop
         return prev;
     }
 
+    /// <summary>M6 owner 形态：仅恢复 ex 样式（含 NOACTIVATE），不动 Z 序——
+    /// owned 窗口 SendToBottom 会压破 owned 约束进桌面层之下，图标层"全消失"（真机踩坑：
+    /// 系统菜单弹出的前台化恢复曾调 RestoreNonInteractive→SendToBottom）。Z 序由 owner 关系天然约束。</summary>
+    public static void RestoreNoActivateStyle(IntPtr hWnd, long prevEx)
+    {
+        try { SetExtendedStyle(hWnd, prevEx); }
+        catch { /* 窗口已无效 */ }
+    }
+
     /// <summary>恢复 NOACTIVATE（用 EnableActivation 返回的 prevEx）并 SendToBottom 回桌面层 Z-order。
     /// 必须 EnableActivation/RestoreNonInteractive 成对调用（try/finally 包裹）。prevEx 含原 NOACTIVATE。</summary>
     public static void RestoreNonInteractive(IntPtr hWnd, long prevEx)

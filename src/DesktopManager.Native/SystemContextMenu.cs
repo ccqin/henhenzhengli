@@ -177,7 +177,8 @@ public static class SystemContextMenu
                         var prevEx = WindowInterop.EnableActivation(ownerHwnd);
                         GetCursorPos(out var pt);
                         var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
-                        WindowInterop.RestoreNonInteractive(ownerHwnd, prevEx);
+                        // 仅恢复 NOACTIVATE 样式，不 SendToBottom（owner 形态下置底会压破 owned 约束=图标层消失）
+                        WindowInterop.RestoreNoActivateStyle(ownerHwnd, prevEx);
                         if (cmd == 0) return true; // 用户取消
                         var info = new CMINVOKECOMMANDINFO
                         {
