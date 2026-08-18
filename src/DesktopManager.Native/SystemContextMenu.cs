@@ -17,16 +17,19 @@ public static class SystemContextMenu
         [PreserveSig] int GetCommandString(uint idCmd, uint uType, uint dwReserved, IntPtr pszName, uint cchMax);
     }
 
-    // 字段宽度必须与 Win32 精确一致：dwHotKey 是 DWORD(4字节)——曾声明成 IntPtr(8字节)
-    // 导致整个结构体错位，InvokeCommand 读到错乱参数而失败（真机踩坑，cmd=160 执行拒绝）。
+    // 必须与 Win32 完整 9 字段一致（曾漏 fMask/hwnd/lpParameters → 从第 2 字段起整体错位，
+    // native 把 lpVerb 低 32 位读成 fMask → 全部 E_INVALIDARG，真机多轮踩坑后对照头文件修正）。
     [StructLayout(LayoutKind.Sequential)]
     private struct CMINVOKECOMMANDINFO
     {
         public int cbSize;
+        public int fMask;           // 0
+        public IntPtr hwnd;         // owner 窗口
         public IntPtr lpVerb;       // MAKEINTRESOURCE 偏移（cmdId-idCmdFirst）
+        public IntPtr lpParameters; // 文件夹动词用；文件动词留空
         public IntPtr lpDirectory;
         public int nShow;
-        public int dwHotKey;
+        public int dwHotKey;        // DWORD(4B)
         public IntPtr hIcon;
     }
 
@@ -202,6 +205,7 @@ public static class SystemContextMenu
                         var info = new CMINVOKECOMMANDINFO
                         {
                             cbSize = Marshal.SizeOf<CMINVOKECOMMANDINFO>(),
+                            hwnd = ownerHwnd,
                             lpVerb = (IntPtr)(cmd - 1),
                             nShow = 1, // SW_SHOWNORMAL
                         };
