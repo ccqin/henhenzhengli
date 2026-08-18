@@ -41,7 +41,10 @@ public static class SystemContextMenu
         [PreserveSig] int CompareIDs(IntPtr lParam, IntPtr pidl1, IntPtr pidl2);
         [PreserveSig] int CreateViewObject(IntPtr hwndOwner, ref Guid riid, out IntPtr ppv);
         [PreserveSig] int GetAttributesOf(uint cidl, IntPtr apidl, ref uint rgfInOut);
-        [PreserveSig] int GetUIObjectOf(IntPtr hwndOwner, uint cidl, [In] IntPtr[] apidl, ref Guid riid,
+        // 关键：COM 接口方法的数组参数默认封送 SAFEARRAY，而 native 期望原生指针数组（LPArray）——
+        // 不加 MarshalAs(LPArray) 会在 native 侧访问违例崩溃（0xC0000005，事件日志实锤）。
+        [PreserveSig] int GetUIObjectOf(IntPtr hwndOwner, uint cidl,
+            [In, MarshalAs(UnmanagedType.LPArray)] IntPtr[] apidl, ref Guid riid,
             IntPtr pvReserved, out IntPtr ppv);
     }
 
