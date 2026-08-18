@@ -17,14 +17,16 @@ public static class SystemContextMenu
         [PreserveSig] int GetCommandString(uint idCmd, uint uType, uint dwReserved, IntPtr pszName, uint cchMax);
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    // 字段宽度必须与 Win32 精确一致：dwHotKey 是 DWORD(4字节)——曾声明成 IntPtr(8字节)
+    // 导致整个结构体错位，InvokeCommand 读到错乱参数而失败（真机踩坑，cmd=160 执行拒绝）。
+    [StructLayout(LayoutKind.Sequential)]
     private struct CMINVOKECOMMANDINFO
     {
         public int cbSize;
-        public IntPtr lpVerb;     // 命令偏移（cmdId-1）
+        public IntPtr lpVerb;       // MAKEINTRESOURCE 偏移（cmdId-idCmdFirst）
         public IntPtr lpDirectory;
         public int nShow;
-        public IntPtr dwHotKey;
+        public int dwHotKey;
         public IntPtr hIcon;
     }
 
@@ -186,7 +188,9 @@ public static class SystemContextMenu
                             lpVerb = (IntPtr)(cmd - 1),
                             nShow = 1, // SW_SHOWNORMAL
                         };
-                        cm.InvokeCommand(ref info);
+                        var hr = cm.InvokeCommand(ref info);
+                        if (hr != 0)
+                            throw new COMException($"InvokeCommand 失败 cmd={cmd} hr=0x{hr:X8}", hr);
                         return true;
                     }
                     finally { DestroyMenu(hmenu); }
