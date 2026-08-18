@@ -246,7 +246,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 .Replace("{path}", filePath)
                 .Replace("{dir}", System.IO.Path.GetDirectoryName(filePath) ?? "")
                 .Replace('“', '"').Replace('”', '"')  // 全角引号归一化（中文输入法常见）
-                .Replace('‘', ''').Replace('’', ''');
+                .Replace('‘', '\'').Replace('’', '\'');
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c {expanded}")
             {
                 UseShellExecute = true,
