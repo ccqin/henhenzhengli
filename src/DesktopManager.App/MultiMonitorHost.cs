@@ -42,6 +42,8 @@ public sealed class MultiMonitorHost
     private List<DisplayGroup> _displayGroups = new();
     // M6 美化：外观（图标尺寸档 + 标签风格），配置加载、SetAppearance 下发子进程。
     private AppearanceConfig _appearance = new();
+    // M6 美化：右键菜单配置（内置开关 + 自定义项），SetMenu 下发子进程。
+    private MenuConfig _menu = new();
 
     // 孤儿（归属屏离线）：不进任何子进程，保存时原样带回（防布局数据丢失）。
     private readonly List<FenceConfig> _orphanFences = new();
@@ -118,6 +120,7 @@ public sealed class MultiMonitorHost
         _wallpapers.AddRange(config.Wallpapers);
         _displayGroups = config.DisplayGroups.ToList();
         _appearance = config.Appearance;
+        _menu = config.Menu;
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -185,6 +188,14 @@ public sealed class MultiMonitorHost
             _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
             player.Send(new Show());
             player.Send(new SetAppearance { IconSize = _appearance.IconSize, LabelStyle = _appearance.LabelStyle });
+            player.Send(new SetMenu
+            {
+                ShowOpen = _menu.ShowOpen, ShowRename = _menu.ShowRename,
+                ShowDelete = _menu.ShowDelete, ShowLocate = _menu.ShowLocate,
+                ShowSystemMenu = _menu.ShowSystemMenu,
+                CustomItems = _menu.CustomItems.Select(c => new CustomItemDto
+                { Name = c.Name, Command = c.Command, Extensions = c.Extensions }).ToList(),
+            });
             player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });
             BottomPair(m.PersistentId); // 图标层置底 + 壁纸插其正下方
         }
@@ -416,6 +427,26 @@ public sealed class MultiMonitorHost
     }
 
     public AppearanceConfig Appearance => _appearance;
+
+    /// <summary>M6 美化：右键菜单配置变更：广播子进程 + 防抖落盘。</summary>
+    public void SetMenuConfig(MenuConfig menu)
+    {
+        _menu = menu;
+        foreach (var c in _iconChildren.Values)
+            c.Player.Send(new SetMenu
+            {
+                ShowOpen = menu.ShowOpen, ShowRename = menu.ShowRename,
+                ShowDelete = menu.ShowDelete, ShowLocate = menu.ShowLocate,
+                ShowSystemMenu = menu.ShowSystemMenu,
+                CustomItems = menu.CustomItems.Select(x => new CustomItemDto
+                { Name = x.Name, Command = x.Command, Extensions = x.Extensions }).ToList(),
+            });
+        Services.LogDb.Audit("settings", "menu",
+            $"内置(开/关) + 自定义 {menu.CustomItems.Count} 项");
+        RequestSave();
+    }
+
+    public MenuConfig Menu => _menu;
 
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
@@ -696,7 +727,8 @@ public sealed class MultiMonitorHost
             IconPositions = positions,
             Wallpapers = _wallpapers.ToList(),
             DisplayGroups = _displayGroups.ToList(),
-            Appearance = _appearance
+            Appearance = _appearance,
+            Menu = _menu,
         };
     }
 

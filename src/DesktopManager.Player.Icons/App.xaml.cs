@@ -90,6 +90,9 @@ public partial class App : Application, ICrossScreenHost
                     _window.LabelStyle = ap.LabelStyle;
                     _window.IconSize = ap.IconSize;
                     break;
+                case SetMenu m:
+                    _window.ApplyMenu(m);
+                    break;
                 case SetPosition p:
                     _window.RepositionTo(_monitor with { WorkX = p.X, WorkY = p.Y, WorkWidth = p.W, WorkHeight = p.H });
                     break;

@@ -31,6 +31,7 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(MoveFencePos), "moveFencePos")]
 [JsonDerivedType(typeof(ClearSelection), "clearSelection")]
 [JsonDerivedType(typeof(SetAppearance), "setAppearance")]
+[JsonDerivedType(typeof(SetMenu), "setMenu")]
 public abstract record IpcMessage
 {
     /// <summary>协议版本。</summary>
@@ -223,6 +224,24 @@ public sealed record SetAppearance : IpcMessage
 {
     public int IconSize { get; init; } = 48;
     public string LabelStyle { get; init; } = "shadow";
+}
+
+/// <summary>右键菜单配置下发（内置开关 + 自定义项；系统子菜单开关）。</summary>
+public sealed record SetMenu : IpcMessage
+{
+    public bool ShowOpen { get; init; } = true;
+    public bool ShowRename { get; init; } = true;
+    public bool ShowDelete { get; init; } = true;
+    public bool ShowLocate { get; init; } = true;
+    public bool ShowSystemMenu { get; init; } = true;
+    public List<CustomItemDto> CustomItems { get; init; } = [];
+}
+
+public sealed record CustomItemDto
+{
+    public string Name { get; init; } = "";
+    public string Command { get; init; } = "";
+    public string Extensions { get; init; } = "";
 }
 
 // ---- 共享 DTO ----

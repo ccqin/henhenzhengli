@@ -115,6 +115,78 @@ public partial class SettingsWindow : Window
         if (logPage) RefreshLogs();  // 进入页时拉最新
         PanelAppearance.Visibility = ReferenceEquals(sender, NavAppearance) ? Visibility.Visible : Visibility.Collapsed;
         if (ReferenceEquals(sender, NavAppearance)) LoadAppearanceUI();
+        PanelMenu.Visibility = ReferenceEquals(sender, NavMenu) ? Visibility.Visible : Visibility.Collapsed;
+        if (ReferenceEquals(sender, NavMenu)) LoadMenuUI();
+    }
+
+    // ---------- 右键菜单页 ----------
+
+    private bool _suppressMenu;
+    private List<CustomMenuItem> _menuItems = new();
+
+    private void LoadMenuUI()
+    {
+        if (_suppressMenu) return;
+        _suppressMenu = true;
+        var m = _host.Menu;
+        MenuOpen.IsChecked = m.ShowOpen;
+        MenuRename.IsChecked = m.ShowRename;
+        MenuDelete.IsChecked = m.ShowDelete;
+        MenuLocate.IsChecked = m.ShowLocate;
+        MenuSystem.IsChecked = m.ShowSystemMenu;
+        _menuItems = m.CustomItems.ToList();
+        CustomMenuList.ItemsSource = _menuItems;
+        _suppressMenu = false;
+    }
+
+    private void CommitMenu()
+    {
+        if (_suppressMenu) return;
+        _host.SetMenuConfig(new MenuConfig
+        {
+            ShowOpen = MenuOpen.IsChecked == true,
+            ShowRename = MenuRename.IsChecked == true,
+            ShowDelete = MenuDelete.IsChecked == true,
+            ShowLocate = MenuLocate.IsChecked == true,
+            ShowSystemMenu = MenuSystem.IsChecked == true,
+            CustomItems = _menuItems.ToList(),
+        });
+    }
+
+    private void MenuFlag_Changed(object sender, RoutedEventArgs e) => CommitMenu();
+
+    private void CustomMenuList_SelectionChanged(object sender, SelectionChangedEventArgs e) { }
+
+    private void CustomMenuAdd_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new CustomMenuItemDialog(this) { Title = "添加自定义菜单项" };
+        if (dlg.ShowDialog() == true)
+        {
+            _menuItems.Add(dlg.Result);
+            CustomMenuList.Items.Refresh();
+            CommitMenu();
+        }
+    }
+
+    private void CustomMenuEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (CustomMenuList.SelectedItem is not CustomMenuItem item) return;
+        var dlg = new CustomMenuItemDialog(this) { Title = "编辑自定义菜单项", Result = item };
+        if (dlg.ShowDialog() == true)
+        {
+            var idx = _menuItems.IndexOf(item);
+            if (idx >= 0) _menuItems[idx] = dlg.Result;
+            CustomMenuList.Items.Refresh();
+            CommitMenu();
+        }
+    }
+
+    private void CustomMenuDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (CustomMenuList.SelectedItem is not CustomMenuItem item) return;
+        _menuItems.Remove(item);
+        CustomMenuList.Items.Refresh();
+        CommitMenu();
     }
 
     // ---------- 外观页 ----------

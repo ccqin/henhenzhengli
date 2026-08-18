@@ -14,6 +14,28 @@ public record AppConfig
     public IReadOnlyList<DisplayGroup> DisplayGroups { get; init; } = Array.Empty<DisplayGroup>();
     // 外观（M6 美化）：图标尺寸档（32/48/64）+ 文字标签风格（shadow=原生阴影 / pill=现代胶囊）。
     public AppearanceConfig Appearance { get; init; } = new();
+    // 右键菜单（M6 美化）：内置项开关 + 系统菜单开关 + 自定义菜单项。
+    public MenuConfig Menu { get; init; } = new();
+}
+
+/// <summary>右键菜单配置：内置四项与系统子菜单可开关，自定义命令项列表。</summary>
+public record MenuConfig
+{
+    public bool ShowOpen { get; init; } = true;
+    public bool ShowRename { get; init; } = true;
+    public bool ShowDelete { get; init; } = true;
+    public bool ShowLocate { get; init; } = true;
+    /// <summary>「更多操作 ▸」系统 shell 菜单子项（打开方式/第三方扩展/属性）。</summary>
+    public bool ShowSystemMenu { get; init; } = true;
+    public IReadOnlyList<CustomMenuItem> CustomItems { get; init; } = Array.Empty<CustomMenuItem>();
+}
+
+/// <summary>自定义菜单项：{path}=文件完整路径，{dir}=所在目录；Extensions 空=所有文件（csv 如 "jpg,png"）。</summary>
+public record CustomMenuItem
+{
+    public string Name { get; init; } = "";
+    public string Command { get; init; } = "";
+    public string Extensions { get; init; } = "";
 }
 
 public record AppearanceConfig

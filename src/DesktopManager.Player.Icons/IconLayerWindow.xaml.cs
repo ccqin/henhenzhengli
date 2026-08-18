@@ -12,6 +12,7 @@ using System.Windows.Media;
 using DesktopManager.Player.Icons;
 using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
+using DIpc = DesktopManager.Ipc;
 using DesktopManager.Native;
 using Serilog;
 
@@ -154,7 +155,103 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _icons.Size = IconSize; // 提取尺寸档同步（缓存 key 含尺寸）
     }
 
+    // INPC（供 LabelWidth 绑定刷新）
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    // ---------- M6 美化：可配置右键菜单 ----------
+    // 菜单配置（主进程 SetMenu 下发）；右键时动态构建（配置变更即时生效）。
+    internal MenuCfg Menu { get; private set; } = new();
+
+    internal sealed class MenuCfg
+    {
+        public bool ShowOpen = true, ShowRename = true, ShowDelete = true, ShowLocate = true, ShowSystemMenu = true;
+        public List<(string Name, string Command, string Extensions)> Custom = new();
+    }
+
+    internal void ApplyMenu(DIpc.SetMenu m)
+    {
+        Menu = new MenuCfg
+        {
+            ShowOpen = m.ShowOpen, ShowRename = m.ShowRename, ShowDelete = m.ShowDelete,
+            ShowLocate = m.ShowLocate, ShowSystemMenu = m.ShowSystemMenu,
+            Custom = m.CustomItems.Select(c => (c.Name, c.Command, c.Extensions)).ToList(),
+        };
+    }
+
+    /// <summary>按当前配置构建图标右键菜单项（散落/盒内共用；右键时调用，配置即时生效）。</summary>
+    internal void FillIconMenu(ContextMenu menu, string path)
+    {
+        menu.Items.Clear();
+        if (Menu.ShowOpen)
+        {
+            var mi = new MenuItem { Header = "打开" };
+            mi.Click += (_, _) => Open(path);
+            menu.Items.Add(mi);
+        }
+        if (Menu.ShowRename)
+        {
+            var mi = new MenuItem { Header = "重命名" };
+            mi.Click += (_, _) => RenameIcon(path);
+            menu.Items.Add(mi);
+        }
+        if (Menu.ShowDelete)
+        {
+            var mi = new MenuItem { Header = "删除" };
+            mi.Click += (_, _) => DeleteIcon(path);
+            menu.Items.Add(mi);
+        }
+        if (Menu.ShowLocate)
+        {
+            var mi = new MenuItem { Header = "打开文件位置" };
+            mi.Click += (_, _) => OpenFileLocation(path);
+            menu.Items.Add(mi);
+        }
+
+        // 自定义项（扩展名过滤：空=全部）
+        var ext = System.IO.Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
+        var customs = Menu.Custom.Where(c =>
+            string.IsNullOrWhiteSpace(c.Extensions) ||
+            c.Extensions.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(x => x.ToLowerInvariant()).Contains(ext)).ToList();
+        if (customs.Count > 0)
+        {
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+            foreach (var (name, command, _) in customs)
+            {
+                var mi = new MenuItem { Header = name, Foreground = System.Windows.Media.Brushes.White };
+                mi.Click += (_, _) => RunCustomCommand(command, path);
+                menu.Items.Add(mi);
+            }
+        }
+
+        if (Menu.ShowSystemMenu)
+        {
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+            var mi = new MenuItem { Header = "更多操作 ▸", Foreground = System.Windows.Media.Brushes.White };
+            mi.Click += (_, _) => SystemContextMenu.Show(_hwnd, path);
+            menu.Items.Add(mi);
+        }
+    }
+
+    /// <summary>自定义命令：{path}/{dir} 占位符替换后经 cmd 执行（隐藏窗口）。</summary>
+    private static void RunCustomCommand(string template, string filePath)
+    {
+        try
+        {
+            var expanded = template
+                .Replace("{path}", filePath)
+                .Replace("{dir}", System.IO.Path.GetDirectoryName(filePath) ?? "");
+            Process.Start(new ProcessStartInfo("cmd.exe", $"/c {expanded}")
+            {
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"自定义命令执行失败：{ex.Message}", "右键菜单", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     // ---------- T4：双击空白切可见性（R4：窗口级 DP，DataTemplate 绑它） ----------
     // 散落图标 DataTemplate 根 StackPanel.Visibility 绑本 DP（RelativeSource AncestorType=Window）；
@@ -218,8 +315,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
         // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
         LooseItemsControl.ItemsSource = _looseIcons;
-        // 散落图标右键菜单（四项：打开/重命名/删除/打开文件位置）。Opening 前 PreviewMouseRightButtonDown hit-test 捕获 _contextMenuIcon。
-        LooseItemsControl.ContextMenu = BuildLooseIconContextMenu();
+        // 散落图标右键菜单：Opening 时按当前菜单配置动态构建（M6 可配置右键菜单）。
+        LooseItemsControl.ContextMenu = new ContextMenu();
+        LooseItemsControl.ContextMenuOpening += (_, e) =>
+        {
+            if (_contextMenuIcon is null) { e.Handled = true; return; }
+            FillIconMenu(LooseItemsControl.ContextMenu, _contextMenuIcon.FilePath);
+        };
 
         // M3：本屏散落图标启动排位缓存（host 按归属切分注入）；后写赢（同 path 重复条目取最后一个）。
         foreach (var p in positions) _iconPositions[p.FilePath] = (p.X, p.Y);
@@ -935,24 +1037,6 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _contextMenuIcon = FindIconFromSource(e.OriginalSource);
     }
 
-    /// <summary>构造散落图标右键菜单（四项）。挂 LooseItemsControl.ContextMenu；Opening 前 PreviewMouseRightButtonDown 已捕 _contextMenuIcon。</summary>
-    private ContextMenu BuildLooseIconContextMenu()
-    {
-        var menu = new ContextMenu();
-        var miOpen = new MenuItem { Header = "打开" };
-        miOpen.Click += (_, _) => { if (_contextMenuIcon is not null) Open(_contextMenuIcon.FilePath); };
-        var miRename = new MenuItem { Header = "重命名" };
-        miRename.Click += (_, _) => { if (_contextMenuIcon is not null) RenameIcon(_contextMenuIcon.FilePath); };
-        var miDelete = new MenuItem { Header = "删除" };
-        miDelete.Click += (_, _) => { if (_contextMenuIcon is not null) DeleteIcon(_contextMenuIcon.FilePath); };
-        var miLocate = new MenuItem { Header = "打开文件位置" };
-        miLocate.Click += (_, _) => { if (_contextMenuIcon is not null) OpenFileLocation(_contextMenuIcon.FilePath); };
-        menu.Items.Add(miOpen);
-        menu.Items.Add(miRename);
-        menu.Items.Add(miDelete);
-        menu.Items.Add(miLocate);
-        return menu;
-    }
 
     /// <summary>重命名：自定义对话框（预填完整文件名）→ ResolveRenamePath 校验 → File.Move。
     /// 成功后 DesktopSync 的 FSW 自动检测 Renamed → Changed → ApplyDiff 增量重渲，UI 自动同步（旧名消失、新名出现）。</summary>

@@ -237,7 +237,17 @@ public partial class FenceControl : UserControl
             Margin = new Thickness(2),
             Background = Brushes.Transparent,
             ToolTip = name,
-            Child = panel
+            Child = panel,
+            Tag = filePath,
+        };
+        // M6：盒内图标右键 = 与散落图标同款可配置菜单（窗口 FillIconMenu 动态构建）。
+        cell.ContextMenu = new ContextMenu();
+        cell.ContextMenuOpening += (_, e) =>
+        {
+            if (Window.GetWindow(this) is IconLayerWindow ilw && cell.Tag is string fp)
+                ilw.FillIconMenu(cell.ContextMenu, fp);
+            else
+                e.Handled = true;
         };
         cell.MouseEnter += (_, _) => { if (!ReferenceEquals(_selectedCell, cell)) cell.Background = HoverBrush; };
         cell.MouseLeave += (_, _) => { if (!ReferenceEquals(_selectedCell, cell)) cell.Background = Brushes.Transparent; };
