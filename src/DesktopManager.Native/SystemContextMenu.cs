@@ -68,7 +68,7 @@ public static class SystemContextMenu
         var buf = Marshal.AllocHGlobal(cch * 2);
         try
         {
-            if (cm.GetCommandString(cmd - 1, GCS_VERBW, 0, buf, cch) != 0) return null;
+            if (cm.GetCommandString(cmd - 1, GCS_VERBW, 0, buf, (uint)cch) != 0) return null;
             var verb = Marshal.PtrToStringUni(buf);
             return string.IsNullOrWhiteSpace(verb) ? null : verb;
         }
