@@ -258,7 +258,9 @@ public sealed class MultiMonitorHost
             };
             var args = $"--monitor-x {m.X} --monitor-y {m.Y} --monitor-w {m.Width} --monitor-h {m.Height}";
             var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
-            DesktopLayerHost.AttachToDesktop(hwnd, m.X, m.Y, m.Width, m.Height);
+            // 底部 2px 缝（M4 真机教训回归修复）：顶层全屏无边框窗会触发 shell 全屏检测 →
+            // 任务栏被自动隐藏（副屏开窗时触发）。-2px 破检测，缝藏在任务栏后不可见。
+            DesktopLayerHost.AttachToDesktop(hwnd, m.X, m.Y, m.Width, m.Height - 2);
             _wallpaperPlayers[m.PersistentId] = player;
             player.Send(new Show());
             ApplyWallpaperTo(m.PersistentId);
@@ -540,7 +542,7 @@ public sealed class MultiMonitorHost
             }
             if (_wallpaperPlayers.TryGetValue(m.PersistentId, out var wpAlive))
             {
-                DesktopLayerHost.RepositionChild(wpAlive.Hwnd, m.X, m.Y, m.Width, m.Height);
+                DesktopLayerHost.RepositionChild(wpAlive.Hwnd, m.X, m.Y, m.Width, m.Height - 2); // 同启动：2px 缝破全屏检测
                 wpAlive.Send(new SetPosition { X = m.X, Y = m.Y, W = m.Width, H = m.Height });
             }
         }
