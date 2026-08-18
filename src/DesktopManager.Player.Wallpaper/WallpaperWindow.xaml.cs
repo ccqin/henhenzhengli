@@ -154,11 +154,28 @@ public partial class WallpaperWindow : Window
 
     private void ApplyImage(string path)
     {
-        var bmp = new BitmapImage();
-        bmp.BeginInit();
-        bmp.CacheOption = BitmapCacheOption.OnLoad;
-        bmp.UriSource = new Uri(path);
-        bmp.EndInit();
+        BitmapImage bmp = new();
+        try
+        {
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.UriSource = new Uri(path);
+            bmp.EndInit();
+        }
+        catch (Exception)
+        {
+            // 真机：非常规 JPEG（AI 生成/部分下载器产物）WPF/WIC 解码报"元数据头损坏"但 GDI+ 可读
+            // → GDI+ 解码转 PNG 流兜底，壁纸仍能显示。
+            using var sd = System.Drawing.Image.FromFile(path);
+            using var ms = new MemoryStream();
+            sd.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            ms.Position = 0;
+            bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+        }
         bmp.Freeze();
         _natW = bmp.PixelWidth;
         _natH = bmp.PixelHeight;

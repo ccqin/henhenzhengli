@@ -236,6 +236,11 @@ public sealed class MultiMonitorHost
         {
             var exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopManager.Player.Wallpaper.exe");
             var player = new ChildProcessManager(m.PersistentId);
+            player.MessageReceived += msg => Application.Current?.Dispatcher.BeginInvoke(() =>
+            {
+                if (msg is DesktopManager.Ipc.Error err)
+                    Log.Error("壁纸子进程[{Mon}]：{Msg}", m.PersistentId, err.Message);
+            });
             player.Exited += code =>
             {
                 if (code != 0 && _wallpaperPlayers.TryGetValue(m.PersistentId, out var cur) && cur == player)
