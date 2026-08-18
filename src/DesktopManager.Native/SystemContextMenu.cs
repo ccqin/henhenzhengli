@@ -59,6 +59,23 @@ public static class SystemContextMenu
     [DllImport("shell32.dll")]
     private static extern void ILFree(IntPtr pidl);
 
+    private const uint GCS_VERBW = 0x0005; // Unicode 动词名（ANSI 接口亦可请求）
+
+    /// <summary>取菜单项动词名（如 "edit"/"openas"）；失败或空（偏移型 verb）返回 null。</summary>
+    private static string? GetVerbString(IContextMenu cm, uint cmd)
+    {
+        const int cch = 256;
+        var buf = Marshal.AllocHGlobal(cch * 2);
+        try
+        {
+            if (cm.GetCommandString(cmd - 1, GCS_VERBW, 0, buf, cch) != 0) return null;
+            var verb = Marshal.PtrToStringUni(buf);
+            return string.IsNullOrWhiteSpace(verb) ? null : verb;
+        }
+        catch { return null; }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
     [DllImport("user32.dll")]
     private static extern IntPtr CreatePopupMenu();
 
@@ -190,7 +207,22 @@ public static class SystemContextMenu
                         };
                         var hr = cm.InvokeCommand(ref info);
                         if (hr != 0)
-                            throw new COMException($"InvokeCommand 失败 cmd={cmd} hr=0x{hr:X8}", hr);
+                        {
+                            // Store 应用注入的菜单扩展（如 Win11 记事本「在记事本中编辑」）对程序化
+                            // InvokeCommand 返回 E_INVALIDARG（缺站点上下文，已知兼容问题）→
+                            // 降级：取动词名走 Process.Start(verb)（ShellExecute 路径，与系统双击同源）。
+                            var verb = GetVerbString(cm, cmd);
+                            if (verb is { Length: > 0 })
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(filePath)
+                                {
+                                    UseShellExecute = true,
+                                    Verb = verb,
+                                });
+                                return true;
+                            }
+                            throw new COMException($"InvokeCommand 失败 cmd={cmd} hr=0x{hr:X8}（且无动词名可降级）", hr);
+                        }
                         return true;
                     }
                     finally { DestroyMenu(hmenu); }
