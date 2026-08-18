@@ -211,7 +211,7 @@ public static class SystemContextMenu
                             // Store 应用注入的菜单扩展（如 Win11 记事本「在记事本中编辑」）对程序化
                             // InvokeCommand 返回 E_INVALIDARG（缺站点上下文，已知兼容问题）→
                             // 降级：取动词名走 Process.Start(verb)（ShellExecute 路径，与系统双击同源）。
-                            var verb = GetVerbString(cm, cmd);
+                            var verb = GetVerbString(cm, (uint)cmd);
                             if (verb is { Length: > 0 })
                             {
                                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(filePath)
