@@ -361,6 +361,34 @@ public partial class SettingsWindow : Window
         if (_suppressEvents) return;
         var vm = MonitorList.SelectedItem as MonitorVm;
         _selectedMonitor = vm?.PersistentId;
+        UpdateClearGroupBtn();
+    }
+
+    /// <summary>「移除组壁纸」按钮：选中屏被有壁纸的组覆盖时才显示。</summary>
+    private void UpdateClearGroupBtn()
+    {
+        if (ClearGroupWallpaperBtn is null) return;
+        ClearGroupWallpaperBtn.Visibility = _selectedMonitor is not null && _host.Groups.Any(g =>
+            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(_selectedMonitor))
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void RemoveCoveringGroupWallpaper_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedMonitor is null) return;
+        var covering = _host.Groups.FirstOrDefault(g =>
+            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(_selectedMonitor));
+        if (covering is null) return;
+        var r = MessageBox.Show(this,
+            $"清空显示组「{covering.Name}」的组壁纸？\n组内所有屏幕将回退到各自的独立壁纸。",
+            "移除组壁纸", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (r != MessageBoxResult.OK) return;
+        var updated = _host.Groups.Select(g => g.Id == covering.Id ? g with { WallpaperPath = "" } : g).ToList();
+        _host.SetDisplayGroups(updated);
+        _groups = updated.ToList();
+        RefreshGroupsUI();
+        RefreshMonitorList();
     }
 
     private void SetMonitorWallpaper_Click(object sender, RoutedEventArgs e)
@@ -394,6 +422,7 @@ public partial class SettingsWindow : Window
 
         _host.SetWallpaper(_selectedMonitor, dlg.FileName);
         RefreshMonitorList();
+        UpdateClearGroupBtn();
     }
 
     private void RemoveMonitorWallpaper_Click(object sender, RoutedEventArgs e)
