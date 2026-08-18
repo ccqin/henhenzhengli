@@ -164,11 +164,38 @@ public static class WindowInterop
         return progman;
     }
 
-    /// <summary>M6 终态（真机结论 2026-08-17）：本机任何 SetParent 进桌面层（WorkerW/Progman）的窗口
-    /// 都不进物理输出（截图链有内容但显示器不显示，人眼验证；顶层窗口正常）→ 放弃子窗口形态，
-    /// 子进程窗口保持顶层 + TOOLWINDOW（无任务栏）+ NOACTIVATE，Z 序由主进程编排（M5 验证路线）。</summary>
+    private const int GWL_HWNDPARENT = -8;
+
+    /// <summary>找桌面图标视图窗口 SHELLDLL_DefView（owner 挂载目标）。</summary>
+    public static IntPtr GetShellDefView()
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman != IntPtr.Zero)
+        {
+            var dv = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+            if (dv != IntPtr.Zero) return dv;
+        }
+        // 备选结构：DefView 在某顶层 WorkerW 下
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, _) =>
+        {
+            if (FindWindowEx(h, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        if (found != IntPtr.Zero)
+            return FindWindowEx(found, IntPtr.Zero, "SHELLDLL_DefView", null);
+        return IntPtr.Zero;
+    }
+
+    /// <summary>M6 终态（真机结论 2026-08-18，Layouter/Fences 同款技巧）：
+    /// 把窗口 Owner 设为 SHELLDLL_DefView（桌面图标视图）。owned 窗口不被 Win+D/ShowDesktop
+    /// 最小化（跟随 shell owner）且 Z 序天然贴桌面层；owner 是顶层关系非 SetParent 父子，
+    /// 无跨进程渲染问题（本机 SetParent 桌面层物理输出失效的坑完全绕开）。</summary>
     public static void AttachTopLevel(IntPtr hWnd, int monX, int monY, int monW, int monH, bool iconLayer = false)
     {
+        var defView = GetShellDefView();
+        if (defView != IntPtr.Zero)
+            SetWindowLongPtr64(hWnd, GWL_HWNDPARENT, defView);
         long ex = GetExtendedStyle(hWnd);
         ex |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
@@ -324,6 +351,7 @@ public static class WindowInterop
         try { SendToBottom(hWnd); }
         catch (Win32Exception) { /* 同上：不阻塞 finally */ }
     }
+
 
     /// <summary>让 hWnd 进入前台。AttachThreadInput trick：把当前前台窗口的线程 input 队列 attach 到本线程，
     /// 使 SetForegroundWindow 通过（绕过「非前台进程不能 SetForeground」限制），随后立即 detach。</summary>

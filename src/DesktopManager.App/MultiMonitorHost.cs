@@ -75,6 +75,7 @@ public sealed class MultiMonitorHost
         _zWatchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _zWatchdog.Tick += (_, _) =>
         {
+            // Win+D 免疫已由 owner=DefView 方案解决（WindowInterop.AttachTopLevel），无需恢复逻辑。
             var own = _iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd)
                 .Concat(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd)).ToList();
             if (own.Count > 0 && WindowInterop.DetectOwnFloating(own))
@@ -314,7 +315,7 @@ public sealed class MultiMonitorHost
                 break;
 
             case IconOpened io:
-                Log.Debug("图标已打开：{Path}", io.Path);
+                Log.Information("图标已打开：{Path}", io.Path);
                 break;
 
             case Error err:
