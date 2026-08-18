@@ -372,18 +372,28 @@ public partial class SettingsWindow : Window
             Filter = "壁纸|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.mp4;*.wmv;*.avi;*.m4v|所有文件|*.*"
         };
         if (dlg.ShowDialog() != true) return;
+
+        // 组壁纸优先级高于独立壁纸（M5 语义）：该屏在有壁纸的组里时独立壁纸会被覆盖（真机踩坑），
+        // 必须让用户显式选择「移出组」或「改设组壁纸」。
+        var covering = _host.Groups.FirstOrDefault(g =>
+            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(_selectedMonitor));
+        if (covering is not null)
+        {
+            var r = MessageBox.Show(this,
+                $"该屏属于显示组「{covering.Name}」，当前生效的是组壁纸：\n{covering.WallpaperPath}\n\n" +
+                "组壁纸会覆盖每屏独立壁纸。要把该屏从组中移除并应用独立壁纸吗？\n（选“否”将取消本次设置）",
+                "该屏被显示组覆盖", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (r != MessageBoxResult.Yes) return;
+            var updated = _host.Groups.Select(g => g.MonitorIds.Contains(_selectedMonitor)
+                ? g with { MonitorIds = g.MonitorIds.Where(id => id != _selectedMonitor).ToList() }
+                : g).ToList();
+            _host.SetDisplayGroups(updated);
+            _groups = updated.ToList();
+            RefreshGroupsUI();
+        }
+
         _host.SetWallpaper(_selectedMonitor, dlg.FileName);
         RefreshMonitorList();
-        
-        SourceInitialized += (_, _) =>
-        {
-            var hwnd = new WindowInteropHelper(this).Handle;
-            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            exStyle |= WS_EX_TOOLWINDOW;
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-            
-            // 添加消息钩子，拦截 Win+D
-        };
     }
 
     private void RemoveMonitorWallpaper_Click(object sender, RoutedEventArgs e)
@@ -391,16 +401,6 @@ public partial class SettingsWindow : Window
         if (_selectedMonitor is null) return;
         _host.RemoveWallpaper(_selectedMonitor);
         RefreshMonitorList();
-        
-        SourceInitialized += (_, _) =>
-        {
-            var hwnd = new WindowInteropHelper(this).Handle;
-            int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            exStyle |= WS_EX_TOOLWINDOW;
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-            
-            // 添加消息钩子，拦截 Win+D
-        };
     }
 
     // ---------- 显示组管理 ----------
