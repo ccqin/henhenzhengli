@@ -194,6 +194,52 @@ public partial class SettingsWindow : Window
     }
     private void SysHiddenList_DoubleClick(object sender, MouseButtonEventArgs e) { }
 
+    /// <summary>枚举系统菜单项（以桌面第一个文件为例），弹列表供点选加入隐藏。</summary>
+    private void SysMenuEnumerate_Click(object sender, RoutedEventArgs e)
+    {
+        string sample = Directory.EnumerateFiles(
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop)).FirstOrDefault()
+            ?? "C:\\Windows\\notepad.exe";
+        List<string> items;
+        try { items = DesktopManager.Native.SystemContextMenu.EnumerateTopLevel(sample); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"枚举失败：{ex.Message}", "系统菜单", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (items.Count == 0)
+        {
+            MessageBox.Show(this, "未枚举到菜单项", "系统菜单", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var hint = new TextBlock
+        {
+            Text = $"「{System.IO.Path.GetFileName(sample)}」的系统菜单项（点击加入隐藏）：",
+            Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(12),
+        };
+        var list = new ListBox { Margin = new Thickness(12, 0, 12, 12), MaxHeight = 380 };
+        foreach (var it in items)
+        {
+            var row = new ListBoxItem { Content = it, Foreground = System.Windows.Media.Brushes.White };
+            row.MouseLeftButtonUp += (_, _) =>
+            {
+                SysHiddenBox.Text = it;
+                AddSysHidden();
+            };
+            list.Items.Add(row);
+        }
+        var dlg = new Window
+        {
+            Title = "系统菜单项", Owner = this, Width = 420, SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
+            Background = new System.Windows.Media.SolidColorBrush(
+                System.Windows.Media.Color.FromRgb(0x1B, 0x1B, 0x26)),
+            Content = new StackPanel { Children = { hint, list } },
+        };
+        dlg.ShowDialog();
+    }
+
     private void AddSysHidden()
     {
         var t = SysHiddenBox.Text.Trim();

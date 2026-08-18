@@ -234,7 +234,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         {
             if (menu.Items.Count > 0) menu.Items.Add(new Separator());
             var mi = new MenuItem { Header = "更多操作 ▸" };
-            mi.Click += (_, _) => SystemContextMenu.Show(_hwnd, path, Menu.SystemHidden);
+            mi.Click += (_, _) => DesktopManager.Native.SystemContextMenu.Show(_hwnd, path, Menu.SystemHidden);
             menu.Items.Add(mi);
         }
     }

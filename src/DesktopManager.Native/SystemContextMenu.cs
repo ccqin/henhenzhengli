@@ -1,13 +1,13 @@
 using System.Runtime.InteropServices;
 using DesktopManager.Native;
 
-namespace DesktopManager.Player.Icons;
+namespace DesktopManager.Native;
 
 /// <summary>系统 shell 右键菜单（资源管理器同款：打开方式/第三方扩展/属性）。
 /// 经典路径：ILCreateFromPath → SHBindToParent 得父 IShellFolder + 子 pidl →
 /// GetUIObjectOf(IContextMenu) → QueryContextMenu 生成 HMENU → TrackPopupMenuEx → InvokeCommand。
 /// （此前用 IShellItem.BindToHandler 版本因 vtable 声明错位拿到空菜单，已废弃。）</summary>
-internal static class SystemContextMenu
+public static class SystemContextMenu
 {
     [ComImport, Guid("000214E4-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IContextMenu
@@ -99,6 +99,48 @@ internal static class SystemContextMenu
                 }
             }
         }
+    }
+
+    /// <summary>枚举系统菜单顶层项文字（不弹出；供设置页展示可过滤的菜单项列表）。</summary>
+    public static List<string> EnumerateTopLevel(string filePath)
+    {
+        var result = new List<string>();
+        var pidlFull = ILCreateFromPath(filePath);
+        if (pidlFull == IntPtr.Zero) return result;
+        try
+        {
+            var iidFolder = IID_IShellFolder;
+            if (SHBindToParent(pidlFull, ref iidFolder, out var psf, out var pidlLast) != 0) return result;
+            try
+            {
+                var iidCm = IID_IContextMenu;
+                var apidl = new IntPtr[1] { pidlLast };
+                if (psf.GetUIObjectOf(IntPtr.Zero, 1, apidl, ref iidCm, IntPtr.Zero, out var cmPtr) != 0) return result;
+                var cm = (IContextMenu)Marshal.GetObjectForIUnknown(cmPtr);
+                try
+                {
+                    var hmenu = CreatePopupMenu();
+                    if (hmenu == IntPtr.Zero) return result;
+                    try
+                    {
+                        if (cm.QueryContextMenu(hmenu, 0, 1, 0x7FFF, CMF_NORMAL) < 0) return result;
+                        var count = GetMenuItemCount(hmenu);
+                        for (var pos = 0; pos < count; pos++)
+                        {
+                            var sb = new System.Text.StringBuilder(256);
+                            GetMenuString(hmenu, (uint)pos, sb, sb.Capacity, MF_BYPOSITION);
+                            var text = sb.ToString().Trim();
+                            if (text.Length > 0) result.Add(text);
+                        }
+                    }
+                    finally { DestroyMenu(hmenu); }
+                }
+                finally { Marshal.ReleaseComObject(cm); }
+            }
+            finally { Marshal.ReleaseComObject(psf); }
+        }
+        finally { ILFree(pidlFull); }
+        return result;
     }
 
     /// <summary>在鼠标位置弹出系统菜单并执行选中命令。hiddenTexts：按菜单文字过滤（不区分大小写包含匹配）。
