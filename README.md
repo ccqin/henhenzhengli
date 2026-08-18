@@ -14,7 +14,8 @@ Windows 桌面图标管理 + 动态壁纸结合体工具。接管 explorer 桌�
 | M3 多屏（图标层） | ✅ 完成（双屏真机验收通过） | `m3-multimon` |
 | M4 壁纸层（单屏×每屏） | ✅ 完成（双屏真机验收通过） | `m4-wallpaper` |
 | M5 跨屏壁纸（显示组）+ 设置窗口 | ✅ 完成（双屏真机验收；拓扑应用本机受限已降级） | `m5-crossscreen` |
-| M6 商店化 | 📋 路线图 | — |
+| M6 子进程架构重构（壁纸/图标层独立进程 + Owner 免疫 Win+D） | ✅ 完成（真机验收通过） | `m6-childprocess` |
+| M7 商店化 | 📋 路线图 | — |
 
 详见 `docs/superpowers/plans/`。
 
@@ -45,13 +46,58 @@ dotnet test DesktopManager.sln
 
 ```
 src/
-├── DesktopManager.Core/    # 纯逻辑（可单测），net10.0：Models / Services（IconItem、DesktopSnapshot、DesktopDiff、DesktopSync、RecoveryStateDetector、ConfigStore）
-├── DesktopManager.Native/  # Win32 P/Invoke 封装，net10.0-windows：DesktopIconVisibility、MonitorEnumerator、WindowInterop、IconExtractorNative
-├── DesktopManager.App/     # WPF 主程序，net10.0-windows10.0.19041.0：App（托盘）、Windows（WallpaperWindow、IconLayerWindow）、Services（IconExtractor）、RecoveryGuard、ShellRestartWatcher
-└── DesktopManager.Tests/   # xUnit 单测，net10.0
+├── DesktopManager.Core/             # 纯逻辑（可单测），net10.0：Models / Services（IconItem、DesktopSnapshot、DesktopDiff、DesktopSync、ConfigStore）
+├── DesktopManager.Native/           # Win32 P/Invoke 封装：DesktopIconVisibility、MonitorEnumerator、WindowInterop（Owner 挂载/Z 序）
+├── DesktopManager.Ipc/              # M6：子进程 JSON 行协议（消息模型 + Reader/Writer/Channel）
+├── DesktopManager.Player.Wallpaper/ # M6：壁纸子进程（每屏一个，图/GIF/视频渲染 + 跨屏裁剪）
+├── DesktopManager.Player.Icons/     # M6：图标层子进程（每屏一个，图标/收纳盒渲染 + 交互自闭环）
+├── DesktopManager.App/              # 主进程：托盘、设置窗口、子进程生命周期（ChildProcessManager）、聚合持久化、播放治理
+└── DesktopManager.Tests/            # xUnit 单测（含 IPC round-trip）
 ```
 
-**三层架构**：壁纸播放窗口（最底）→ 图标层窗口（中间）→ 设置 UI（最上）。Core 可测、Native 仅封装、App 组合 UI，分层单向依赖。
+**M6 架构**：主进程管逻辑与生命周期，渲染全部在子进程；壁纸窗口（最底）→ 图标层窗口（其上）→ 普通窗口/设置 UI（最上）。主进程崩溃时子进程因 stdin EOF 自动退出（桌面安全恢复）。
+
+## 实现原理（M6 终态架构）
+
+### 进程模型：1 主 + 每屏 2 子
+
+```
+DesktopManager.App（主进程）
+ ├─ 托盘 / 设置窗口 / 配置 / 桌面文件监听（DesktopSync diff）/ 播放治理（全屏·锁屏·电池暂停）
+ ├─ 每屏 1 个 Player.Wallpaper.exe —— 壁纸渲染（静态图 / GIF / 视频，跨屏拼接裁剪）
+ └─ 每屏 1 个 Player.Icons.exe —— 图标层渲染 + 交互（双击/右键/拖拽/收纳盒，子进程内自闭环）
+```
+
+通信走 **stdin/stdout JSON 行协议**（`DesktopManager.Ipc`）：子进程启动后先输出 `{"type":"ready","hwnd":...}` 上报窗口句柄，之后主进程下发壁纸/图标/暂停等指令，子进程上报布局变更、跨屏拖拽请求。**崩溃安全不变式**：主进程死 → 子进程 stdin 断开 → 自动退出 → 原生桌面恢复。
+
+### 核心技巧：窗口 Owner = SHELLDLL_DefView（Win+D 免疫的关键）
+
+子进程窗口是**普通顶层窗口**，创建后由主进程执行（`WindowInterop.AttachTopLevel`）：
+
+```csharp
+SetWindowLongPtr(hwnd, GWL_HWNDPARENT, hShellDefView);  // ① Owner 设为桌面图标视图
+// ② WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE（不进任务栏、不抢焦点；壁纸再加 WS_EX_TRANSPARENT 点击穿透）
+// ③ 主进程 BottomPair 编排：图标层贴底、壁纸窗插其正下方
+```
+
+①是 **Stardock Fences / Layouter 同款技巧**，一举解决三个问题：
+
+| 特性 | 原理 |
+|---|---|
+| **Win+D / 显示桌面免疫** | owned 窗口跟随 owner；owner 是 shell 自己的 DefView，从不被"显示桌面"最小化 → 我们的窗口跟着免疫（真实键盘实测） |
+| **Z 序天然贴桌面层** | owned 窗口约束在 owner 之上，永远低于普通窗口 |
+| **无跨进程渲染问题** | owner 是顶层窗口间关系，不是 `SetParent` 父子挂载 |
+
+### 为什么不用 Lively 的 WorkerW 挂载？（真机踩坑记录）
+
+Lively 等壁纸软件的通用方案是把渲染窗口 `SetParent` 进桌面窗口树（WorkerW/Progman）——**在部分显卡驱动（本机 Intel A780）上跨进程子窗口内容不进物理显示输出**：DWM 合成缓冲里有内容（截图/PrintWindow 都"看得到"），但显示器不显示（人眼验证）。真机排障全过程与三条路线对比见 `docs/2026-08-18-M6子进程重构-真机复盘.md`。**教训**：截图链不能作为"物理显示"的验收手段。
+
+### 保活机制
+
+- **Z 看门狗**（2s）：检测窗口浮高 → 重锚底序；
+- **子进程崩溃** → 非零退出码自动重启 + 数据恢复；
+- **explorer 重启**（TaskbarCreated）→ 重建全部子进程并重新挂 Owner；
+- **拔插屏** → 按新拓扑停/起对应子进程，孤儿屏配置保留待插回恢复。
 
 ## ⚠️ 真机验收注意
 
@@ -79,4 +125,6 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hi
 - M3 多屏实现计划：`docs/superpowers/plans/2026-08-04-m3-multi-monitor.md`
 - M4 壁纸层实现计划：`docs/superpowers/plans/2026-08-04-m4-wallpaper.md`
 - M5 跨屏壁纸+设置窗口计划：`docs/superpowers/plans/2026-08-05-m5-crossscreen.md`
+- M6 子进程架构重构计划（含真机结论回写）：`docs/superpowers/plans/2026-08-13-m6-child-process.md`
+- M6 真机实施复盘（三条路线对比 + 方法论教训）：`docs/2026-08-18-M6子进程重构-真机复盘.md`
 - M0 spike 结论与验收：`docs/superpowers/notes/m0-spike-results.md`
