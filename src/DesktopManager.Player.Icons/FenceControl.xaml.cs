@@ -256,8 +256,13 @@ public partial class FenceControl : UserControl
             _contentDragArmed = true;
             _contentDragPath = filePath;
             _contentDragOrigin = e.GetPosition(this);
-            // 跨区单选：先清散落图标选中（及本盒旧选中），再高亮本图标
-            (Window.GetWindow(this) as IconLayerWindow)?.ClearAllSelection();
+            // 单选（跨盒/跨屏）：先清本屏全部选中（散落+所有收纳盒，含本盒旧选），
+            // 再经 IPC 清其他屏（ClearAllSelection），最后高亮本图标。
+            if (Window.GetWindow(this) is IconLayerWindow ilw)
+            {
+                ilw.ClearLocalSelection();
+                ilw.ClearAllSelection();
+            }
             SelectIcon(cell, panel);
             e.Handled = true;
         };
