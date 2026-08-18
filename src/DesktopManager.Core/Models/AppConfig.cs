@@ -1,4 +1,4 @@
-namespace DesktopManager.Core.Models;
+﻿namespace DesktopManager.Core.Models;
 
 public record AppConfig
 {
@@ -12,6 +12,14 @@ public record AppConfig
     public IReadOnlyList<WallpaperConfig> Wallpapers { get; init; } = Array.Empty<WallpaperConfig>();
     // M5：显示组（组内屏共享壁纸源；成员屏渲染组优先于独立壁纸）。
     public IReadOnlyList<DisplayGroup> DisplayGroups { get; init; } = Array.Empty<DisplayGroup>();
+    // 外观（M6 美化）：图标尺寸档（32/48/64）+ 文字标签风格（shadow=原生阴影 / pill=现代胶囊）。
+    public AppearanceConfig Appearance { get; init; } = new();
+}
+
+public record AppearanceConfig
+{
+    public int IconSize { get; init; } = 48;
+    public string LabelStyle { get; init; } = "shadow";
 }
 
 /// <summary>散落图标自由摆放位置持久化记录。FilePath 为键（OrdIgnoreCase），X/Y 为 LooseItemsControl 坐标系（与 IconCanvas 1:1）。

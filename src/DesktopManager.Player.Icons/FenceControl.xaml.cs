@@ -170,6 +170,12 @@ public partial class FenceControl : UserControl
     /// <summary>构造内容区小图标项：StackPanel(28x28 Image + 文件名 TextBlock)，支持左键拖出（移动阈值 → DoDragDrop）。
     /// M2 完善：原先仅 Image（文件名只能 hover 看），现加 TextBlock 显示名字，参考散落图标样式但更紧凑。
     /// 拖出逻辑挂在 StackPanel 上（与散落图标 panel 对称），保证拖出仍工作。</summary>
+    private static int IconSizeOf(DependencyObject from)
+    {
+        var w = Window.GetWindow(from);
+        return w is IconLayerWindow ilw ? Math.Max(20, ilw.IconSize - 14) : 28;
+    }
+
     private FrameworkElement BuildContentIcon(string filePath)
     {
         var name = Path.GetFileName(filePath);

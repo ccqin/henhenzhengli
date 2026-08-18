@@ -47,29 +47,53 @@
                  R4 可见性：根 StackPanel Visibility 绑窗口 IconVisibility DP（双击空白切它 → 全部散落图标显隐）。 -->
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <StackPanel Width="80"
-                                Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
-                        <StackPanel.Style>
-                            <Style TargetType="StackPanel">
+                    <!-- M6 美化：图标尺寸/标签风格均绑窗口 DP（SetAppearance IPC 下发）。
+                         hover 圆角白底 + 选中 Win11 圆角蓝选框（替代整块方底）。 -->
+                    <Border CornerRadius="6"
+                            Padding="4,2"
+                            Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
+                        <Border.Style>
+                            <Style TargetType="Border">
                                 <Setter Property="Background" Value="Transparent"/>
                                 <Style.Triggers>
-                                    <!-- M5-UI：单击选中高亮（Win11 桌面选中色感） -->
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#22FFFFFF"/>
+                                    </Trigger>
                                     <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                        <Setter Property="Background" Value="#4066CCFF"/>
+                                        <Setter Property="Background" Value="#3366CCFF"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </StackPanel.Style>
-                        <Image Width="32" Height="32" Stretch="Uniform"
-                               Source="{Binding FilePath, Converter={StaticResource FilePathToIconConverter}}"/>
-                        <TextBlock Text="{Binding DisplayName}"
-                                   MaxWidth="80"
-                                   TextWrapping="Wrap"
-                                   TextAlignment="Center"
-                                   Foreground="White"
-                                   Background="#8C000000"
-                                   Padding="2,0,2,0"/>
-                    </StackPanel>
+                        </Border.Style>
+                        <StackPanel>
+                            <Image Width="{Binding IconSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   Height="{Binding IconSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                   Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"
+                                   Source="{Binding FilePath, Converter={StaticResource FilePathToIconConverter}}"/>
+                            <Border x:Name="LabelHost" CornerRadius="8" Margin="0,3,0,0" Padding="6,2"
+                                    HorizontalAlignment="Center">
+                                <TextBlock x:Name="LabelText" Text="{Binding DisplayName}"
+                                           MaxWidth="{Binding LabelWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="34"
+                                           TextAlignment="Center" Foreground="White" Background="Transparent"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <DataTemplate.Triggers>
+                        <!-- 标签风格（窗口 DP LabelStyle）：shadow=原生文字阴影（默认）；pill=现代胶囊底 -->
+                        <DataTrigger Binding="{Binding LabelStyle, RelativeSource={RelativeSource AncestorType=Window}}" Value="shadow">
+                            <Setter TargetName="LabelHost" Property="Background" Value="Transparent"/>
+                            <Setter TargetName="LabelText" Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.9" Color="Black"/>
+                                </Setter.Value>
+                            </Setter>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding LabelStyle, RelativeSource={RelativeSource AncestorType=Window}}" Value="pill">
+                            <Setter TargetName="LabelHost" Property="Background" Value="#66000000"/>
+                            <Setter TargetName="LabelText" Property="Effect" Value="{x:Null}"/>
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>

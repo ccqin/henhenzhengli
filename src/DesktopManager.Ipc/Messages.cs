@@ -30,6 +30,7 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ImportFence), "importFence")]
 [JsonDerivedType(typeof(MoveFencePos), "moveFencePos")]
 [JsonDerivedType(typeof(ClearSelection), "clearSelection")]
+[JsonDerivedType(typeof(SetAppearance), "setAppearance")]
 public abstract record IpcMessage
 {
     /// <summary>协议版本。</summary>
@@ -216,6 +217,13 @@ public sealed record MoveFencePos : IpcMessage
 
 /// <summary>清除本屏选中态（跨屏单选广播，发往除请求屏外的所有图标层）。</summary>
 public sealed record ClearSelection : IpcMessage;
+
+/// <summary>外观设置下发：图标尺寸档（32/48/64）+ 标签风格（shadow/pill）。</summary>
+public sealed record SetAppearance : IpcMessage
+{
+    public int IconSize { get; init; } = 48;
+    public string LabelStyle { get; init; } = "shadow";
+}
 
 // ---- 共享 DTO ----
 

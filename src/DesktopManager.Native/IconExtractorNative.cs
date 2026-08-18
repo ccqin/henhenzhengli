@@ -30,13 +30,55 @@ public static class IconExtractorNative
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
-    /// <summary>提取文件图标 HICON。size <= 16 走小图标，否则大图标。返回 IntPtr.Zero 表示失败。</summary>
+    // 48/64 档：SHGetImageList 取系统 imagelist（EXTRALARGE=48；JUMBO=256 由 WPF 缩到目标尺寸）
+    private const uint SHGFI_SYSICONINDEX = 0x000004000;
+    private const int SHIL_SMALL = 1, SHIL_EXTRALARGE = 2, SHIL_JUMBO = 4;
+    private const int ILD_TRANSPARENT = 1;
+
+    [ComImport, Guid("46EB5926-582E-4017-9FDF-E8998DAA0950"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IImageList
+    {
+        // vtable 序（占位签名只需 slot 数正确；仅 GetIcon 会被调用）
+        int Add(IntPtr a, IntPtr b, int c, out int d);
+        int ReplaceIcon(int a, IntPtr b, out int c);
+        int SetOverlayImage(int a, int b);
+        int Replace(int a, IntPtr b, IntPtr c);
+        int AddMasked(IntPtr a, int b, out int c);
+        int Draw(IntPtr a);
+        int Remove(int a);
+        int GetIcon(int i, int flags, out IntPtr picon);
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern int SHGetImageList(int iImageList, ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out IImageList ppv);
+
+    private static Guid IID_IImageList => new("46EB5926-582E-4017-9FDF-E8998DAA0950");
+
+    /// <summary>提取文件图标 HICON。size：16/32 直接 SHGFI；48=EXTRALARGE；≥64=JUMBO(256) 由显示端缩放。
+    /// 返回 IntPtr.Zero 表示失败。</summary>
     public static IntPtr GetHIcon(string filePath, int size = 32)
     {
-        var fi = new SHFILEINFO();
-        uint flags = SHGFI_ICON | (size <= 16 ? SHGFI_SMALLICON : SHGFI_LARGEICON);
-        SHGetFileInfo(filePath, 0, ref fi, (uint)Marshal.SizeOf<SHFILEINFO>(), flags);
-        return fi.hIcon;
+        if (size > 32)
+        {
+            var fi = new SHFILEINFO();
+            SHGetFileInfo(filePath, 0, ref fi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_SYSICONINDEX);
+            var shil = size <= 48 ? SHIL_EXTRALARGE : SHIL_JUMBO;
+            var iid = IID_IImageList;
+            if (SHGetImageList(shil, ref iid, out var list) == 0)
+            {
+                try
+                {
+                    if (list.GetIcon(fi.iIcon, ILD_TRANSPARENT, out var hicon) == 0)
+                        return hicon;
+                }
+                finally { Marshal.ReleaseComObject(list); }
+            }
+            // 失败降级 32
+        }
+        var f2 = new SHFILEINFO();
+        uint flags2 = SHGFI_ICON | (size <= 16 ? SHGFI_SMALLICON : SHGFI_LARGEICON);
+        SHGetFileInfo(filePath, 0, ref f2, (uint)Marshal.SizeOf<SHFILEINFO>(), flags2);
+        return f2.hIcon;
     }
 
     /// <summary>调用方取完 BitmapSource 后应释放 HICON。</summary>

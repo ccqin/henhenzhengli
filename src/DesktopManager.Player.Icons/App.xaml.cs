@@ -86,6 +86,10 @@ public partial class App : Application, ICrossScreenHost
             switch (msg)
             {
                 case Show: _window.Show(); break;
+                case SetAppearance ap:
+                    _window.LabelStyle = ap.LabelStyle;
+                    _window.IconSize = ap.IconSize;
+                    break;
                 case SetPosition p:
                     _window.RepositionTo(_monitor with { WorkX = p.X, WorkY = p.Y, WorkWidth = p.W, WorkHeight = p.H });
                     break;

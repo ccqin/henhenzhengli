@@ -2,6 +2,7 @@ using System.Windows.Threading;
 using System.Windows.Interop;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -122,6 +123,38 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     // 供 OnFenceIconRemoved 回填（Fence 图标拖出空白 → 落到 Drop 位置，而非网格/原位）。
     // 一次性：OnFenceIconRemoved 读后立即清 null（防下次非 Drop 触发的 RemoveIcon 误用残留值）。
     private Point? _dropPosition;
+
+    // ---------- M6 美化：外观 DP（主进程 SetAppearance IPC 下发） ----------
+    public static readonly DependencyProperty IconSizeProperty =
+        DependencyProperty.Register(nameof(IconSize), typeof(int), typeof(IconLayerWindow),
+            new PropertyMetadata(48, (d, _) => ((IconLayerWindow)d).OnAppearanceChanged()));
+    /// <summary>图标尺寸档：32/48/64（绑定模板 Image 与 FenceControl 图标）。</summary>
+    public int IconSize
+    {
+        get => (int)GetValue(IconSizeProperty);
+        set => SetValue(IconSizeProperty, value);
+    }
+
+    public static readonly DependencyProperty LabelStyleProperty =
+        DependencyProperty.Register(nameof(LabelStyle), typeof(string), typeof(IconLayerWindow),
+            new PropertyMetadata("shadow"));
+    /// <summary>文字标签风格：shadow（原生阴影，默认）/ pill（现代胶囊）。</summary>
+    public string LabelStyle
+    {
+        get => (string)GetValue(LabelStyleProperty);
+        set => SetValue(LabelStyleProperty, value);
+    }
+
+    /// <summary>标签最大宽度（跟随 IconSize，XAML 无法做属性算术，靠 INPC 通知）。</summary>
+    public double LabelWidth => IconSize + 32;
+
+    private void OnAppearanceChanged()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(LabelWidth)));
+        _icons.Size = IconSize; // 提取尺寸档同步（缓存 key 含尺寸）
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     // ---------- T4：双击空白切可见性（R4：窗口级 DP，DataTemplate 绑它） ----------
     // 散落图标 DataTemplate 根 StackPanel.Visibility 绑本 DP（RelativeSource AncestorType=Window）；
@@ -411,7 +444,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private (double x, double y) FindFreeLooseSlot()
     {
         const double originX = 16, originY = 16;
-        const double stepX = 90, stepY = 96;
+        // 间距跟随图标尺寸档（M6 美化）：32→90x96 / 48→100x116 / 64→120x140
+        double stepX = IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120;
+        double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
         const int cols = 10;
         for (int row = 0; ; row++)
         {

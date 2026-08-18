@@ -37,6 +37,33 @@
             </Setter>
         </Style>
 
+        <!-- 外观选择块（RadioButton）：圆角边框 + 选中强调 -->
+        <Style x:Key="RadioTile" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#B8B8C8"/>
+            <Setter Property="Padding" Value="14,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" CornerRadius="6" Background="#24243A" BorderBrush="#3A3A55"
+                                BorderThickness="1" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5A5A88"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2C3E58"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#4CC2FF"/>
+                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 导航项（RadioButton）：圆角 + 悬停 + 选中强调 -->
         <Style x:Key="NavItem" TargetType="RadioButton">
             <Setter Property="Foreground" Value="#B8B8C8"/>
@@ -217,6 +244,12 @@
                         <TextBlock Text="每屏壁纸" Margin="10,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
+                <RadioButton x:Name="NavAppearance" Style="{StaticResource NavItem}" Checked="Nav_Checked">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE771;" Style="{StaticResource Glyph}"/>
+                        <TextBlock Text="外观" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
                 <RadioButton x:Name="NavLogs" Style="{StaticResource NavItem}" Checked="Nav_Checked">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE9F9;" Style="{StaticResource Glyph}"/>
@@ -284,6 +317,58 @@
                                     Visibility="Collapsed" Click="RemoveCoveringGroupWallpaper_Click"
                                     ToolTip="该屏所在显示组的组壁纸覆盖了独立壁纸；点击后清空组壁纸，组内各屏回退各自独立壁纸"/>
                         </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 页：外观 -->
+                <Border x:Name="PanelAppearance" Style="{StaticResource Card}" Visibility="Collapsed">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE771;" Style="{StaticResource Glyph}"/>
+                            <TextBlock Text="外观" Style="{StaticResource CardTitle}" Margin="10,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="桌面图标" Style="{StaticResource Label}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="IconSizeS" Content="小（32px）" Style="{StaticResource RadioTile}" Checked="IconSize_Checked" Tag="32"/>
+                            <RadioButton x:Name="IconSizeM" Content="中（48px）" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="IconSize_Checked" Tag="48"/>
+                            <RadioButton x:Name="IconSizeL" Content="大（64px）" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="IconSize_Checked" Tag="64"/>
+                        </StackPanel>
+                        <TextBlock Text="文字标签风格" Style="{StaticResource Label}" Margin="0,14,0,0"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="LabelShadow" Content="原生风（文字阴影）" Style="{StaticResource RadioTile}" Checked="LabelStyle_Checked" Tag="shadow"/>
+                            <RadioButton x:Name="LabelPill" Content="现代胶囊" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="LabelStyle_Checked" Tag="pill"/>
+                        </StackPanel>
+                        <!-- 实时预览（字体图标示意尺寸；标签跟随风格选择切换样式） -->
+                        <TextBlock Text="预览" Style="{StaticResource Label}" Margin="0,14,0,0"/>
+                        <Border Background="#3A4A5C" CornerRadius="6" Height="150" Margin="0,4,0,0" ClipToBounds="True">
+                            <StackPanel Orientation="Horizontal" Margin="20,0">
+                                <StackPanel Width="110" Margin="0,16,0,0">
+                                    <TextBlock x:Name="PreviewGlyph" Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" Foreground="#E8F0FF"
+                                               HorizontalAlignment="Center"
+                                               FontSize="{Binding Text, ElementName=PreviewIconSize}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=LabelShadow}" Value="True">
+                                                        <Setter Property="Effect">
+                                                            <Setter.Value>
+                                                                <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.9"/>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Border x:Name="PreviewLabel" CornerRadius="8" Padding="6,2" HorizontalAlignment="Center" Margin="0,4,0,0">
+                                        <TextBlock Text="示例文件.txt" Foreground="White" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="90"/>
+                                    </Border>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="PreviewIconSize" Text="48" Visibility="Collapsed"/>
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,12,0,0"
+                                   Text="改动立即生效并保存。新图标的网格排位间距跟随尺寸档；已有图标位置不变。"/>
                     </StackPanel>
                 </Border>
 

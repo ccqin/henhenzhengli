@@ -113,6 +113,53 @@ public partial class SettingsWindow : Window
         bool logPage = ReferenceEquals(sender, NavLogs);
         PanelLogs.Visibility = logPage ? Visibility.Visible : Visibility.Collapsed;
         if (logPage) RefreshLogs();  // 进入页时拉最新
+        PanelAppearance.Visibility = ReferenceEquals(sender, NavAppearance) ? Visibility.Visible : Visibility.Collapsed;
+        if (ReferenceEquals(sender, NavAppearance)) LoadAppearanceUI();
+    }
+
+    // ---------- 外观页 ----------
+
+    private bool _suppressAppearance;
+
+    private void LoadAppearanceUI()
+    {
+        if (_suppressAppearance) return;
+        _suppressAppearance = true;
+        var a = _host.Appearance;
+        foreach (var rb in new[] { IconSizeS, IconSizeM, IconSizeL })
+            rb.IsChecked = rb.Tag.ToString() == a.IconSize.ToString();
+        LabelShadow.IsChecked = a.LabelStyle == "shadow";
+        LabelPill.IsChecked = a.LabelStyle == "pill";
+        PreviewIconSize.Text = a.IconSize.ToString();
+        UpdatePreviewLabel();
+        _suppressAppearance = false;
+    }
+
+    private void IconSize_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressAppearance) return;
+        if (sender is RadioButton { Tag: string tag } && int.TryParse(tag, out var size))
+        {
+            _host.SetAppearance(size, LabelShadow.IsChecked == true ? "shadow" : "pill");
+            PreviewIconSize.Text = size.ToString();
+        }
+    }
+
+    private void LabelStyle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_suppressAppearance) return;
+        _host.SetAppearance(int.TryParse(PreviewIconSize.Text, out var sz) ? sz : 48,
+            LabelShadow.IsChecked == true ? "shadow" : "pill");
+        UpdatePreviewLabel();
+    }
+
+    /// <summary>预览标签：shadow=透明底+文字阴影；pill=胶囊底。</summary>
+    private void UpdatePreviewLabel()
+    {
+        bool shadow = LabelShadow.IsChecked == true;
+        PreviewLabel.Background = shadow
+            ? System.Windows.Media.Brushes.Transparent
+            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 0, 0)) { Opacity = 0.4 };
     }
 
     // ---------- 日志与操作页 ----------

@@ -40,6 +40,8 @@ public sealed class MultiMonitorHost
     private readonly List<WallpaperConfig> _wallpapers = new();
     // M5：显示组（组壁纸优先于独立壁纸；成员离线/删组自动回退）。
     private List<DisplayGroup> _displayGroups = new();
+    // M6 美化：外观（图标尺寸档 + 标签风格），配置加载、SetAppearance 下发子进程。
+    private AppearanceConfig _appearance = new();
 
     // 孤儿（归属屏离线）：不进任何子进程，保存时原样带回（防布局数据丢失）。
     private readonly List<FenceConfig> _orphanFences = new();
@@ -115,6 +117,7 @@ public sealed class MultiMonitorHost
 
         _wallpapers.AddRange(config.Wallpapers);
         _displayGroups = config.DisplayGroups.ToList();
+        _appearance = config.Appearance;
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -181,6 +184,7 @@ public sealed class MultiMonitorHost
             DesktopLayerHost.AttachToDesktop(hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight, iconLayer: true);
             _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
             player.Send(new Show());
+            player.Send(new SetAppearance { IconSize = _appearance.IconSize, LabelStyle = _appearance.LabelStyle });
             player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });
             BottomPair(m.PersistentId); // 图标层置底 + 壁纸插其正下方
         }
@@ -400,6 +404,18 @@ public sealed class MultiMonitorHost
     {
         foreach (var c in _iconChildren.Values) c.Player.Send(new ClearSelection());
     }
+
+    /// <summary>M6 美化：外观变更（设置窗口入口）：广播子进程 + 防抖落盘。</summary>
+    public void SetAppearance(int iconSize, string labelStyle)
+    {
+        _appearance = _appearance with { IconSize = iconSize, LabelStyle = labelStyle };
+        foreach (var c in _iconChildren.Values)
+            c.Player.Send(new SetAppearance { IconSize = iconSize, LabelStyle = labelStyle });
+        Services.LogDb.Audit("settings", "appearance", $"图标 {iconSize}px / 标签 {labelStyle}");
+        RequestSave();
+    }
+
+    public AppearanceConfig Appearance => _appearance;
 
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
@@ -679,7 +695,8 @@ public sealed class MultiMonitorHost
             Fences = fences,
             IconPositions = positions,
             Wallpapers = _wallpapers.ToList(),
-            DisplayGroups = _displayGroups.ToList()
+            DisplayGroups = _displayGroups.ToList(),
+            Appearance = _appearance
         };
     }
 

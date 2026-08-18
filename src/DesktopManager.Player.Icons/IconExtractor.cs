@@ -12,14 +12,17 @@ namespace DesktopManager.Player.Icons;
 public sealed class IconExtractor
 {
     private readonly Dictionary<string, BitmapSource> _cache = new(StringComparer.OrdinalIgnoreCase);
+    // 当前提取尺寸档（外观设置下发；切换时清缓存重新提取）。
+    public int Size { get; set; } = 48;
 
     public BitmapSource? GetIcon(string filePath)
     {
+        var key = filePath + "|" + Size;
         lock (_cache)
         {
-            if (_cache.TryGetValue(filePath, out var hit)) return hit;
+            if (_cache.TryGetValue(key, out var hit)) return hit;
         }
-        IntPtr hicon = IconExtractorNative.GetHIcon(filePath);
+        IntPtr hicon = IconExtractorNative.GetHIcon(filePath, Size);
         if (hicon == IntPtr.Zero) return null;
         try
         {
@@ -29,7 +32,7 @@ public sealed class IconExtractor
             var bmp = Imaging.CreateBitmapSourceFromHIcon(hicon, Int32Rect.Empty,
                 BitmapSizeOptions.FromEmptyOptions());
             bmp.Freeze(); // 跨线程可用
-            lock (_cache) { _cache[filePath] = bmp; }
+            lock (_cache) { _cache[key] = bmp; }
             return bmp;
         }
         finally { IconExtractorNative.Destroy(hicon); }
