@@ -760,10 +760,20 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         e.Handled = true;
     }
 
+    /// <summary>双击/右键打开回调（App 上报 IconOpened/Error，主进程日志可见）。</summary>
+    public static event Action<string, string?>? OpenReported;
+
     private static void Open(string path)
     {
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-        catch { /* M1 真机验收记录失败 case */ }
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            OpenReported?.Invoke(path, null);
+        }
+        catch (Exception ex)
+        {
+            OpenReported?.Invoke(path, ex.Message); // M6：失败必须可见（曾静默吞掉）
+        }
     }
 
     // ---------- P0-T2：散落图标拖拽（R2/R3 三守卫，Layouter 数据引用模式）+ 右键 ----------
