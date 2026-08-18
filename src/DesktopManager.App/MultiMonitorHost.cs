@@ -276,8 +276,17 @@ public sealed class MultiMonitorHost
                 {
                     child.Fences = lc.Fences.Select(f => FromDto(f) with { MonitorId = monitorId }).ToList();
                     child.Positions = lc.Positions.Select(p => new IconPosition(p.Path, p.X, p.Y, monitorId)).ToList();
+                    Services.LogDb.Audit("fence", "layout", $"{child.Fences.Count} 收纳盒 / {child.Positions.Count} 散落图标", monitorId);
                     RequestSave();
                 }
+                break;
+
+            case FenceAction fa:
+                Services.LogDb.Audit("fence", fa.Action, fa.Title, monitorId);
+                break;
+
+            case IconAction ia:
+                Services.LogDb.Audit("icon", ia.Action, ia.Detail is { Length: > 0 } ? ia.Detail : ia.Path, monitorId);
                 break;
 
             case ClearSelectionExcept cs:
@@ -289,6 +298,7 @@ public sealed class MultiMonitorHost
                 // 主进程中转：源屏（缓存归属）导出 → 目标屏导入。
                 var owner = FindOwnerMonitor(req.Path);
                 if (owner is null || owner == req.TargetMonitorId) break;
+                Services.LogDb.Audit("icon", "cross-screen", req.Path, req.TargetMonitorId);
                 _pendingImport = (req.TargetMonitorId, req.Path, null, req.X, req.Y);
                 _iconChildren[owner].Player.Send(new ExportIcon { Path = req.Path });
                 break;
@@ -296,6 +306,7 @@ public sealed class MultiMonitorHost
             case TransferFenceReq req:
                 var fenceOwner = _iconChildren.FirstOrDefault(kv => kv.Value.ContainsFence(req.FenceId));
                 if (fenceOwner.Key is null || fenceOwner.Key == req.TargetMonitorId) break;
+                Services.LogDb.Audit("fence", "cross-screen", req.FenceId, req.TargetMonitorId);
                 _pendingImport = (req.TargetMonitorId, null, req.FenceId, req.X, req.Y);
                 fenceOwner.Value.Player.Send(new ExportFence { FenceId = req.FenceId });
                 break;
@@ -345,6 +356,7 @@ public sealed class MultiMonitorHost
         });
         ApplyWallpaperTo(monitorId);
         RequestSave();
+        Services.LogDb.Audit("wallpaper", "set", path, monitorId);
         Log.Information("壁纸已设置：{Mon} ← {Path}", monitorId, path);
     }
 
@@ -354,6 +366,7 @@ public sealed class MultiMonitorHost
         _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
         ApplyWallpaperTo(monitorId);
         RequestSave();
+        Services.LogDb.Audit("wallpaper", "remove", "", monitorId);
         Log.Information("壁纸已移除：{Mon}", monitorId);
     }
 
@@ -384,6 +397,7 @@ public sealed class MultiMonitorHost
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
     {
+        Services.LogDb.Audit("settings", "groups", $"显示组 {groups.Count} 个");
         _displayGroups = groups.ToList();
         foreach (var mon in _iconChildren.Keys.ToList()) ApplyWallpaperTo(mon);
         RequestSave();

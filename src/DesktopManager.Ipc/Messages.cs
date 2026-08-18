@@ -13,6 +13,8 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ExportIconData), "exportIconData")]
 [JsonDerivedType(typeof(ExportFenceData), "exportFenceData")]
 [JsonDerivedType(typeof(ClearSelectionExcept), "clearSelectionExcept")]
+[JsonDerivedType(typeof(FenceAction), "fenceAction")]
+[JsonDerivedType(typeof(IconAction), "iconAction")]
 [JsonDerivedType(typeof(SetWallpaper), "setWallpaper")]
 [JsonDerivedType(typeof(SetIcons), "setIcons")]
 [JsonDerivedType(typeof(ApplyDiff), "applyDiff")]
@@ -156,6 +158,22 @@ public sealed record SetPosition : IpcMessage
 
 /// <summary>正常退出指令。</summary>
 public sealed record Shutdown : IpcMessage;
+
+/// <summary>图标层操作审计上报（建/删/改名/折叠/移动收纳盒等用户操作，主进程落库）。</summary>
+public sealed record FenceAction : IpcMessage
+{
+    public string Action { get; init; } = "";   // create/delete/rename/fold/move
+    public string FenceId { get; init; } = "";
+    public string Title { get; init; } = "";
+}
+
+/// <summary>图标操作审计上报（打开/重命名/删除文件等）。</summary>
+public sealed record IconAction : IpcMessage
+{
+    public string Action { get; init; } = "";   // open/rename/delete/locate/move
+    public string Path { get; init; } = "";
+    public string Detail { get; init; } = "";
+}
 
 // ---- 主进程 → 图标层子进程（跨屏迁移编排） ----
 

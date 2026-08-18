@@ -272,6 +272,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             W = 180,
             H = 120
         });
+        AuditReported?.Invoke("fence", "create", "新收纳盒", null);
         RequestSave(); // T7
     }
 
@@ -286,6 +287,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         if (r != MessageBoxResult.OK) return;
 
         var paths = fence.BuildConfig().IconFilePaths;
+        AuditReported?.Invoke("fence", "delete", title, null);
         _fences.Remove(fence);
         IconCanvas.Children.Remove(fence);
         fence.IconAdded -= OnFenceIconAdded;
@@ -763,6 +765,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>双击/右键打开回调（App 上报 IconOpened/Error，主进程日志可见）。</summary>
     public static event Action<string, string?>? OpenReported;
 
+    /// <summary>操作审计上报（App 转 IPC FenceAction/IconAction，主进程落库）。</summary>
+    public static event Action<string, string, string, string?>? AuditReported;
+
+
     private static void Open(string path)
     {
         try
@@ -916,6 +922,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 return;
             }
             File.Move(oldPath, result.NewPath!);
+            AuditReported?.Invoke("icon", "rename", $"{Path.GetFileName(oldPath)} → {Path.GetFileName(result.NewPath!)}", oldPath);
             // 不手动刷新 IconLayer：DesktopSync.Changed 已在 App.xaml.cs 接到 ApplyDiff，FSW 会触发增量重渲。
         }
         catch (Exception ex)
@@ -939,6 +946,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
                 Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
                 Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            AuditReported?.Invoke("icon", "delete", name, path);
             // 不手动刷新：DesktopSync.Changed → ApplyDiff 自动移除该图标。
         }
         catch (Exception ex)

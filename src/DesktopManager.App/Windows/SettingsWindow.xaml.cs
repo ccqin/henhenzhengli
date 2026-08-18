@@ -110,6 +110,63 @@ public partial class SettingsWindow : Window
         PanelArrange.Visibility = ReferenceEquals(sender, NavArrange) ? Visibility.Visible : Visibility.Collapsed;
         PanelGroups.Visibility = ReferenceEquals(sender, NavGroups) ? Visibility.Visible : Visibility.Collapsed;
         PanelMonitors.Visibility = ReferenceEquals(sender, NavMonitors) ? Visibility.Visible : Visibility.Collapsed;
+        bool logPage = ReferenceEquals(sender, NavLogs);
+        PanelLogs.Visibility = logPage ? Visibility.Visible : Visibility.Collapsed;
+        if (logPage) RefreshLogs();  // 进入页时拉最新
+    }
+
+    // ---------- 日志与操作页 ----------
+
+    private void RefreshLogs()
+    {
+        int days = LogDaysFilter?.SelectedIndex switch { 0 => 1, 2 => 7, 3 => 30, _ => 3 };
+        string minLevel = LogLevelFilter?.SelectedIndex switch
+        {
+            1 => "OPS",   // 只看操作
+            2 => "ERR",   // 只看错误
+            3 => "WRN",   // 警告+错误
+            _ => "DBG",   // 全部
+        };
+        var rows = Services.LogDb.Query(days, minLevel);
+        LogGrid.ItemsSource = rows;
+        LogCount.Text = $"{rows.Count} 条（近 {days} 天）";
+    }
+
+    private void LogFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (PanelLogs?.Visibility == Visibility.Visible) RefreshLogs();
+    }
+
+    private void LogRefresh_Click(object sender, RoutedEventArgs e) => RefreshLogs();
+
+    private void LogExport_Click(object sender, RoutedEventArgs e)
+    {
+        int days = LogDaysFilter?.SelectedIndex switch { 0 => 1, 2 => 7, 3 => 30, _ => 3 };
+        var sfd = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "文本文件|*.txt",
+            FileName = $"DesktopManager-日志-{DateTime.Now:yyyyMMdd-HHmm}.txt",
+        };
+        if (sfd.ShowDialog(this) == true)
+        {
+            try
+            {
+                System.IO.File.WriteAllLines(sfd.FileName, Services.LogDb.Export(days));
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(sfd.FileName) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"导出失败：{ex.Message}", "日志", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+    }
+
+    private void LogClear_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "确定清空全部日志与操作记录？", "清空确认",
+            MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        Services.LogDb.Clear();
+        RefreshLogs();
     }
 
     // ---------- 排列预览（只读） ----------

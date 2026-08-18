@@ -43,6 +43,13 @@ public partial class App : Application, ICrossScreenHost
         };
         IconLayerWindow.OpenReported += (path, err) =>
             Reply(err is null ? new IconOpened { Path = path } : new Error { Message = $"打开失败 {path}: {err}" });
+        IconLayerWindow.AuditReported += (kind, action, detail, arg) =>
+        {
+            if (kind == "fence")
+                Reply(new FenceAction { Action = action, Title = detail });
+            else
+                Reply(new IconAction { Action = action, Path = arg ?? "", Detail = detail });
+        };
         _window.LayoutChanged += OnLayoutChangedLocal;
 
         // EnsureHandle：创建 hwnd（触发 SourceInitialized）但不显示——等主进程 SetParent 后发 Show。

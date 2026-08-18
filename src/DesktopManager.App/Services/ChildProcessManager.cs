@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using DesktopManager.Ipc;
 using Serilog;
 
@@ -59,6 +60,7 @@ public sealed class ChildProcessManager : IDisposable
             err => Log.Debug("子进程 stderr[{Mon}]: {Err}", MonitorId, err),
             _cts.Token));
         Log.Information("子进程就绪：{Mon} exe={Exe} hwnd={Hwnd}", MonitorId, exePath, Hwnd);
+        LogDb.Audit("process", "start", Path.GetFileName(exePath), MonitorId);
         return Hwnd;
     }
 

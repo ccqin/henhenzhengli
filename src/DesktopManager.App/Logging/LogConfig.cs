@@ -22,8 +22,14 @@ public static class LogConfig
         const string template =
             "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
 
+        // 日志数据库（设置窗口可查）：主进程单一写者；子进程事件经 IPC 上报后走 Log.Audit。
+        Services.LogDb.Init(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "DesktopManager", "logs.db"));
+
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()              // 开发期 Debug；线上若嫌噪可改 Information 或加配置开关
+            .WriteTo.Sink(new Logging.LogDbSink())
             .WriteTo.File(
                 path: Path.Combine(logDir, "log-.log"),
                 outputTemplate: template,
