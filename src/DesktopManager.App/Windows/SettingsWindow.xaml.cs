@@ -136,6 +136,8 @@ public partial class SettingsWindow : Window
         MenuSystem.IsChecked = m.ShowSystemMenu;
         _menuItems = m.CustomItems.ToList();
         CustomMenuList.ItemsSource = _menuItems;
+        _sysHidden = m.SystemMenuHidden.ToList();
+        SysHiddenList.ItemsSource = _sysHidden;
         _suppressMenu = false;
     }
 
@@ -150,6 +152,7 @@ public partial class SettingsWindow : Window
             ShowLocate = MenuLocate.IsChecked == true,
             ShowSystemMenu = MenuSystem.IsChecked == true,
             CustomItems = _menuItems.ToList(),
+            SystemMenuHidden = _sysHidden.ToList(),
         });
     }
 
@@ -179,6 +182,51 @@ public partial class SettingsWindow : Window
             CustomMenuList.Items.Refresh();
             CommitMenu();
         }
+    }
+
+    // 系统菜单隐藏项
+    private List<string> _sysHidden = new();
+
+    private void SysHiddenAdd_Click(object sender, RoutedEventArgs e) => AddSysHidden();
+    private void SysHiddenBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) AddSysHidden();
+    }
+    private void SysHiddenList_DoubleClick(object sender, MouseButtonEventArgs e) { }
+
+    private void AddSysHidden()
+    {
+        var t = SysHiddenBox.Text.Trim();
+        if (t.Length == 0 || _sysHidden.Contains(t)) return;
+        _sysHidden.Add(t);
+        SysHiddenBox.Clear();
+        SysHiddenList.Items.Refresh();
+        CommitSysHidden();
+    }
+
+    private void SysHiddenRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is string t)
+        {
+            _sysHidden.Remove(t);
+            SysHiddenList.Items.Refresh();
+            CommitSysHidden();
+        }
+    }
+
+    private void CommitSysHidden()
+    {
+        if (_suppressMenu) return;
+        _host.SetMenuConfig(new MenuConfig
+        {
+            ShowOpen = MenuOpen.IsChecked == true,
+            ShowRename = MenuRename.IsChecked == true,
+            ShowDelete = MenuDelete.IsChecked == true,
+            ShowLocate = MenuLocate.IsChecked == true,
+            ShowSystemMenu = MenuSystem.IsChecked == true,
+            CustomItems = _menuItems.ToList(),
+            SystemMenuHidden = _sysHidden.ToList(),
+        });
     }
 
     private void CustomMenuDelete_Click(object sender, RoutedEventArgs e)

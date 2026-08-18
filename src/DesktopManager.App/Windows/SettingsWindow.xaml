@@ -413,6 +413,27 @@
                         </StackPanel>
                         <TextBlock Style="{StaticResource Hint}" Margin="0,12,0,0"
                                    Text="命令占位符：{path}=文件完整路径，{dir}=所在目录。&#13;扩展名过滤：留空=所有文件；如填 jpg,png 则只在图片右键时显示。&#13;示例：名称「用 VSCode 打开」，命令 code &quot;{path}&quot;"/>
+                        <TextBlock Text="系统菜单隐藏项（按文字匹配，如「7-Zip」「属性」）" Style="{StaticResource Label}" Margin="0,16,0,0"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBox x:Name="SysHiddenBox" Width="220" Padding="6,4" KeyDown="SysHiddenBox_KeyDown"/>
+                            <Button Content="＋ 添加" Margin="8,0,0,0" Click="SysHiddenAdd_Click"/>
+                        </StackPanel>
+                        <ListBox x:Name="SysHiddenList" Height="70" Margin="0,8,0,0"
+                                 MouseDoubleClick="SysHiddenList_DoubleClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding}" Foreground="#E8E8F0" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="1" Content="✕" Background="Transparent" Padding="6,2"
+                                                Click="SysHiddenRemove_Click" Tag="{Binding}"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </StackPanel>
                 </Border>
 

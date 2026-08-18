@@ -28,6 +28,8 @@ public record MenuConfig
     /// <summary>「更多操作 ▸」系统 shell 菜单子项（打开方式/第三方扩展/属性）。</summary>
     public bool ShowSystemMenu { get; init; } = true;
     public IReadOnlyList<CustomMenuItem> CustomItems { get; init; } = Array.Empty<CustomMenuItem>();
+    /// <summary>系统菜单隐藏项（按文字包含匹配，如“7-Zip”“属性”）。</summary>
+    public IReadOnlyList<string> SystemMenuHidden { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>自定义菜单项：{path}=文件完整路径，{dir}=所在目录；Extensions 空=所有文件（csv 如 "jpg,png"）。</summary>

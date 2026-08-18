@@ -169,6 +169,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     {
         public bool ShowOpen = true, ShowRename = true, ShowDelete = true, ShowLocate = true, ShowSystemMenu = true;
         public List<(string Name, string Command, string Extensions)> Custom = new();
+        public List<string> SystemHidden = new();
     }
 
     internal void ApplyMenu(DIpc.SetMenu m)
@@ -179,6 +180,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             ShowOpen = m.ShowOpen, ShowRename = m.ShowRename, ShowDelete = m.ShowDelete,
             ShowLocate = m.ShowLocate, ShowSystemMenu = m.ShowSystemMenu,
             Custom = m.CustomItems.Select(c => (c.Name, c.Command, c.Extensions)).ToList(),
+            SystemHidden = m.SystemMenuHidden.ToList(),
         };
     }
 
@@ -222,7 +224,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             if (menu.Items.Count > 0) menu.Items.Add(new Separator());
             foreach (var (name, command, _) in customs)
             {
-                var mi = new MenuItem { Header = name, Foreground = System.Windows.Media.Brushes.White };
+                var mi = new MenuItem { Header = name };
                 mi.Click += (_, _) => RunCustomCommand(command, path);
                 menu.Items.Add(mi);
             }
@@ -231,8 +233,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         if (Menu.ShowSystemMenu)
         {
             if (menu.Items.Count > 0) menu.Items.Add(new Separator());
-            var mi = new MenuItem { Header = "更多操作 ▸", Foreground = System.Windows.Media.Brushes.White };
-            mi.Click += (_, _) => SystemContextMenu.Show(_hwnd, path);
+            var mi = new MenuItem { Header = "更多操作 ▸" };
+            mi.Click += (_, _) => SystemContextMenu.Show(_hwnd, path, Menu.SystemHidden);
             menu.Items.Add(mi);
         }
     }

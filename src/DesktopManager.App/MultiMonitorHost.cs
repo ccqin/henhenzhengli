@@ -195,6 +195,7 @@ public sealed class MultiMonitorHost
                 ShowSystemMenu = _menu.ShowSystemMenu,
                 CustomItems = _menu.CustomItems.Select(c => new CustomItemDto
                 { Name = c.Name, Command = c.Command, Extensions = c.Extensions }).ToList(),
+                SystemMenuHidden = _menu.SystemMenuHidden.ToList(),
             });
             player.Send(new SetFences { Fences = fences.Select(ToDto).ToList() });
             BottomPair(m.PersistentId); // 图标层置底 + 壁纸插其正下方
@@ -440,6 +441,7 @@ public sealed class MultiMonitorHost
                 ShowSystemMenu = menu.ShowSystemMenu,
                 CustomItems = menu.CustomItems.Select(x => new CustomItemDto
                 { Name = x.Name, Command = x.Command, Extensions = x.Extensions }).ToList(),
+                SystemMenuHidden = menu.SystemMenuHidden.ToList(),
             });
         Services.LogDb.Audit("settings", "menu",
             $"内置(开/关) + 自定义 {menu.CustomItems.Count} 项");

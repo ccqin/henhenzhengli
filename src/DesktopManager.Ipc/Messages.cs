@@ -235,6 +235,7 @@ public sealed record SetMenu : IpcMessage
     public bool ShowLocate { get; init; } = true;
     public bool ShowSystemMenu { get; init; } = true;
     public List<CustomItemDto> CustomItems { get; init; } = [];
+    public List<string> SystemMenuHidden { get; init; } = [];
 }
 
 public sealed record CustomItemDto

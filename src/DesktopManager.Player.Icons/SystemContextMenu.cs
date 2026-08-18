@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DesktopManager.Native;
 
 namespace DesktopManager.Player.Icons;
 
@@ -72,8 +73,37 @@ internal static class SystemContextMenu
     private static readonly Guid IID_IShellFolder = new("000214E6-0000-0000-C000-000000000046");
     private const uint TPM_RETURNCMD = 0x0100, TPM_RIGHTBUTTON = 0x0002, CMF_NORMAL = 0;
 
-    /// <summary>在鼠标位置弹出系统菜单并执行选中命令。返回是否成功弹出。</summary>
-    public static bool Show(IntPtr ownerHwnd, string filePath)
+    [DllImport("user32.dll")]
+    private static extern int GetMenuItemCount(IntPtr hmenu);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetMenuString(IntPtr hmenu, uint uIDItem, System.Text.StringBuilder lpString, int nMaxCount, uint uFlag);
+    [DllImport("user32.dll")]
+    private static extern bool DeleteMenu(IntPtr hmenu, uint uPosition, uint uFlags);
+    private const uint MF_BYPOSITION = 0x0400;
+
+    /// <summary>按文字删除 HMENU 顶层项（不区分大小写包含匹配；从尾往头删避免索引位移）。</summary>
+    private static void RemoveHiddenItems(IntPtr hmenu, IReadOnlyList<string> hiddenTexts)
+    {
+        for (var pos = GetMenuItemCount(hmenu) - 1; pos >= 0; pos--)
+        {
+            var sb = new System.Text.StringBuilder(256);
+            GetMenuString(hmenu, (uint)pos, sb, sb.Capacity, MF_BYPOSITION);
+            var text = sb.ToString();
+            foreach (var h in hiddenTexts)
+            {
+                if (!string.IsNullOrWhiteSpace(h) &&
+                    text.Contains(h.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    DeleteMenu(hmenu, (uint)pos, MF_BYPOSITION);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>在鼠标位置弹出系统菜单并执行选中命令。hiddenTexts：按菜单文字过滤（不区分大小写包含匹配）。
+    /// 返回是否成功弹出。</summary>
+    public static bool Show(IntPtr ownerHwnd, string filePath, IReadOnlyList<string>? hiddenTexts = null)
     {
         var pidlFull = ILCreateFromPath(filePath);
         if (pidlFull == IntPtr.Zero) return false;
@@ -95,8 +125,14 @@ internal static class SystemContextMenu
                     try
                     {
                         if (cm.QueryContextMenu(hmenu, 0, 1, 0x7FFF, CMF_NORMAL) < 0) return false;
+                        if (hiddenTexts is { Count: > 0 }) RemoveHiddenItems(hmenu, hiddenTexts);
+
+                        // NOACTIVATE 窗口 TrackPopupMenu 弹不出（菜单需前台窗口接收消息，真机踩坑）
+                        // → 弹出前临时前台化，结束恢复 NOACTIVATE。
+                        var prevEx = WindowInterop.EnableActivation(ownerHwnd);
                         GetCursorPos(out var pt);
                         var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
+                        WindowInterop.RestoreNonInteractive(ownerHwnd, prevEx);
                         if (cmd == 0) return true; // 用户取消
                         var info = new CMINVOKECOMMANDINFO
                         {
