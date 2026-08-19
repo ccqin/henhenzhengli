@@ -399,19 +399,34 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 排序方式（重排散落图标到网格；收纳盒内不动）
         var sort = new MenuItem { Header = "排序方式" };
         var byName = new MenuItem { Header = "名称" };
-        byName.Click += (_, _) => SortLoose(i => i.DisplayName, StringComparer.OrdinalIgnoreCase);
+        byName.Click += (_, _) => SortLooseOrdered(_looseIcons
+            .OrderBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase));
+        var byType = new MenuItem { Header = "项目类型" };
+        byType.Click += (_, _) => SortLooseOrdered(_looseIcons
+            .OrderBy(TypeCategoryRank)
+            .ThenBy(i => i.DisplayName, StringComparer.OrdinalIgnoreCase));
         sort.Items.Add(byName);
+        sort.Items.Add(byType);
         menu.Items.Add(sort);
         // 壁纸设置统一在托盘设置窗口（用户决策：桌面右键不再出现壁纸入口）。
         return menu;
     }
 
-    /// <summary>按选择器重排散落图标到网格（列优先）：全部先离格再按序回填，避免旧位干扰找空位。</summary>
-    private void SortLoose(Func<IconItem, string> keySelector, StringComparer comparer)
+    /// <summary>原生桌面同款类别权重：此电脑(0) → 回收站(1) → 文件夹(2) → 文件(3)。</summary>
+    private static int TypeCategoryRank(IconItem i)
     {
-        var ordered = _looseIcons.OrderBy(keySelector, comparer).ToList();
+        if (i.FilePath.StartsWith("::{20D04FE0", StringComparison.Ordinal)) return 0; // 此电脑
+        if (i.FilePath.StartsWith("::", StringComparison.Ordinal)) return 1;           // 其他 shell 对象（回收站）
+        if (Directory.Exists(i.FilePath)) return 2;                                     // 文件夹
+        return 3;                                                                        // 文件
+    }
+
+    /// <summary>按给定顺序重排散落图标到网格（列优先）：全部先离格再按序回填，避免旧位干扰找空位。</summary>
+    private void SortLooseOrdered(IEnumerable<IconItem> ordered)
+    {
+        var list = ordered.ToList();
         foreach (var i in _looseIcons) { i.X = -1; i.Y = -1; } // 先全离格（INPC 同步 UI）
-        foreach (var i in ordered)
+        foreach (var i in list)
         {
             (i.X, i.Y) = FindFreeLooseSlot();
         }
