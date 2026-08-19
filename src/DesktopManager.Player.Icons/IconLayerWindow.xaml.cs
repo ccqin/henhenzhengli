@@ -189,19 +189,20 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             mi.Click += (_, _) => Open(path);
             menu.Items.Add(mi);
         }
-        if (Menu.ShowRename)
+        bool isShell = path.StartsWith("::", StringComparison.Ordinal); // shell 虚拟对象（此电脑/回收站）
+        if (Menu.ShowRename && !isShell)
         {
             var mi = new MenuItem { Header = "重命名" };
             mi.Click += (_, _) => RenameIcon(path);
             menu.Items.Add(mi);
         }
-        if (Menu.ShowDelete)
+        if (Menu.ShowDelete && !isShell)
         {
             var mi = new MenuItem { Header = "删除" };
             mi.Click += (_, _) => DeleteIcon(path);
             menu.Items.Add(mi);
         }
-        if (Menu.ShowLocate)
+        if (Menu.ShowLocate && !isShell)
         {
             var mi = new MenuItem { Header = "打开文件位置" };
             mi.Click += (_, _) => OpenFileLocation(path);
@@ -457,7 +458,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // I-1 幽灵图标：fallback 前 File.Exists 守卫——fenced 文件被外部删除后 ApplyDiff 已移除该 path，
             // 此时拖出/删 Fence 触发回填，若不守卫会把磁盘上已不存在的文件加回散落区 → 幽灵图标（sync 不自清）。
             // 文件不存在则 it 保持 null，下方 Add 跳过（不加幽灵、不 NRE）。
-            if (it is null && File.Exists(path)) it = new IconItem(path, Path.GetFileName(path));
+            if (it is null && (File.Exists(path) || Directory.Exists(path))) it = new IconItem(path, Path.GetFileName(path));
             if (it is not null && !_looseIcons.Contains(it)) AddLooseIcon(it); // X/Y<=0 网格排位，否则保留原位置；防重复
         }
         RequestSave(); // T7
@@ -624,7 +625,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // I-1 幽灵图标：fallback 前 File.Exists 守卫——fenced 文件被外部删除后 ApplyDiff 已移除该 path，
         // 此时拖出/删 Fence 触发回填，若不守卫会把磁盘上已不存在的文件加回散落区 → 幽灵图标（sync 不自清）。
         // 文件不存在则 it 保持 null，下方 Add 跳过（不加幽灵、不 NRE）。
-        if (it is null && File.Exists(filePath)) it = new IconItem(filePath, Path.GetFileName(filePath));
+        if (it is null && (File.Exists(filePath) || Directory.Exists(filePath))) it = new IconItem(filePath, Path.GetFileName(filePath));
         // 防重复事件：it 已在散落区则不重复 Add（Contains 走引用相等，T3 单实例下可靠）。
         if (it is not null && !_looseIcons.Contains(it))
         {

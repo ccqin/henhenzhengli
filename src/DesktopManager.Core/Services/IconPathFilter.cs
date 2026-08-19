@@ -18,7 +18,8 @@ public static class IconPathFilter
             try
             {
                 // File.Exists 对非法路径/权限错误返回 false 不抛；try/catch 兜底极端 case。
-                if (!File.Exists(p)) continue;
+                // 桌面文件夹也是图标（M6）：目录存在性一并判断。
+                if (!File.Exists(p) && !Directory.Exists(p)) continue;
             }
             catch
             {

@@ -33,4 +33,19 @@ public class DesktopSnapshotTests
         }
         finally { dir.Delete(recursive: true); }
     }
+
+    [Fact]
+    public void Capture_IncludesDirectories()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "dm_snap_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(Path.Combine(dir, "subfolder"));
+        File.WriteAllText(Path.Combine(dir, "a.txt"), "x");
+        try
+        {
+            var items = new DesktopSnapshot(dir).Capture();
+            Assert.Contains(items, i => i.DisplayName == "subfolder"); // 文件夹也是桌面图标（M6）
+            Assert.Contains(items, i => i.DisplayName == "a.txt");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }

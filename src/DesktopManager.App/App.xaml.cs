@@ -181,7 +181,14 @@ public partial class App : Application
             // 3. 桌面同步：仍是单一全局 watcher（桌面是单一逻辑空间，不按屏拆）；
             //    初始全量按归属分发，Changed 增量经 host.Dispatch 路由到各窗口。
             var snapshot = DesktopSnapshot.ForDefaultDesktops();
-            _host.ApplyInitialSnapshot(snapshot.Capture());
+            // 桌面系统图标（shell 虚拟对象，文件系统枚举拿不到；CLSID 路径走 SHGetFileInfo 取图标、
+            // Process.Start 打开）。位置持久化天然工作（IconPosition 以 CLSID 路径存取）。
+            var shellIcons = new[]
+            {
+                new Core.Models.IconItem("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "此电脑"),
+                new Core.Models.IconItem("::{645FF040-5081-101B-9F08-00AA002F954E}", "回收站"),
+            };
+            _host.ApplyInitialSnapshot(snapshot.Capture().Concat(shellIcons).ToList());
             _sync = new DesktopSync(
                 snapshot,
                 new[] {

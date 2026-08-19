@@ -127,6 +127,7 @@ public partial class FenceControl : UserControl
     {
         ClearIconSelection();
         if (string.IsNullOrEmpty(filePath)) return;
+        if (filePath.StartsWith("::", StringComparison.Ordinal)) return; // shell 虚拟对象不入盒（无文件实体，重启无法恢复）
         if (_contentIcons.ContainsKey(filePath)) return; // 已归属，去重
         var element = BuildContentIcon(filePath);
         _contentIcons[filePath] = element;

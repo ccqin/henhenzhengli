@@ -22,7 +22,7 @@ public sealed class DesktopSnapshot : IDesktopSnapshot
         foreach (var folder in _folders)
         {
             if (!Directory.Exists(folder)) continue;
-            foreach (var path in Directory.EnumerateFiles(folder))
+            foreach (var path in Directory.EnumerateFiles(folder).Concat(Directory.EnumerateDirectories(folder)))
             {
                 if (!seen.Add(path)) continue; // 按完整 FilePath 去重（同一物理文件被多个文件夹路径枚举到时只留一份；用户/公共桌面下不同路径的同名文件各自保留）
                 items.Add(new IconItem(path, Path.GetFileName(path)));
