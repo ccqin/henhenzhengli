@@ -80,7 +80,7 @@ public sealed class MultiMonitorHost
         _zWatchdog.Tick += (_, _) =>
         {
             // 子进程前台化交互中（系统菜单等，跨进程抑制信号）：此刻窗口瞬时浮高是预期行为，跳过。
-            if (WindowInterop.UiSuppress.IsActive()) return;
+            if (UiSuppress.IsActive()) return;
             // Win+D 免疫已由 owner=DefView 方案解决（WindowInterop.AttachTopLevel），无需恢复逻辑。
             var own = _iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd)
                 .Concat(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd)).ToList();
