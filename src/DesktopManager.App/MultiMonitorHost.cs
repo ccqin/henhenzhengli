@@ -68,6 +68,15 @@ public sealed class MultiMonitorHost
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
 
+    public MultiMonitorHost(IConfigStore store)
+    {
+        _store = store;
+        _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
+            Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        // Z 看门狗已移除（2026-08-19）：owner=DefView 约束 + WM_MOUSEACTIVATE/MA_NOACTIVATE 双保险
+        // 已根治浮高源；看门狗反而在交互（右键菜单等）期间误判重锚造成闪屏。
+    }
+
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏启动壁纸 + 图标层子进程并挂 WorkerW。
     /// 零显示器（理论不发生）抛异常，由 App 走回滚（RestoreExplorer）。</summary>
     public void Attach() => AttachCore(_store.Load());
