@@ -132,9 +132,6 @@ public partial class App : Application, ICrossScreenHost
                 case ImportFence imf:
                     _window.ImportFence(FromDto(imf.Fence) with { X = imf.X, Y = imf.Y });
                     break;
-                case MoveFencePos mv:
-                    _window.MoveFence(mv.FenceId, new Point(mv.X, mv.Y));
-                    break;
                 case DesktopManager.Ipc.Shutdown: Shutdown(0); break;
             }
         }

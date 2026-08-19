@@ -7,15 +7,6 @@ public record IntRect(int Left, int Top, int Right, int Bottom)
     public int Width => Right - Left;
     public int Height => Bottom - Top;
 
-    public IntRect Shift(int dx, int dy) => this with { Left = Left + dx, Top = Top + dy, Right = Right + dx, Bottom = Bottom + dy };
-
-    /// <summary>面积交（无交返回 0）。</summary>
-    public int IntersectArea(IntRect o)
-    {
-        var w = Math.Min(Right, o.Right) - Math.Max(Left, o.Left);
-        var h = Math.Min(Bottom, o.Bottom) - Math.Max(Top, o.Top);
-        return w > 0 && h > 0 ? w * h : 0;
-    }
 
     /// <summary>边接触（共享边段：左右贴合且有垂直重叠，或上下贴合且有水平重叠）= 拓扑连通。</summary>
     public bool EdgeTouches(IntRect o)

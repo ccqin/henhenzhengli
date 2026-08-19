@@ -76,49 +76,8 @@ public static class WindowInterop
             throw new Win32Exception(Marshal.GetLastWin32Error());
     }
 
-    /// <summary>M4：壁纸窗嵌入桌面层（Wallpaper Engine 同款）：SetParent 到 Progman 成为子窗，
-    /// 排在 Progman 子窗最底（SHELLDLL_DefView 之下）。收益：① shell 永不把桌面内容当全屏 app
-    /// （真机：GIF 连续渲染触发全屏检测 → 任务栏被剥 topmost + 壁纸窗顶高盖任务栏）；② 桌面层天然在
-    /// 所有顶层窗（含图标层/任务栏）之下，Z-order 零编排。坐标转成 Progman 客户区（虚拟屏）相对坐标。
-    /// WS_EX_TRANSPARENT 让 hit-test 穿透到下层桌面（右键桌面菜单保留）。</summary>
-    private const int GWL_STYLE = -16;
-    private const long WS_POPUP = 0x80000000L;
-    private const long WS_CHILD = 0x40000000L;
 
-    public static void AttachToDesktopLayer(IntPtr hWnd, int monX, int monY, int monW, int monH)
-    {
-        var progman = FindWindow("Progman", null);
-        if (progman == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(0, "Progman not found");
-        SetParent(hWnd, progman);
-        // SetParent 不自动改样式（MSDN 要求调用者重置）：去 WS_POPUP 加 WS_CHILD，
-        // 否则「有 parent 的顶层样式窗」DWM 不合成（真机：窗口存在 vis=True 但不绘制）。
-        long st = GetStyle(hWnd);
-        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
-        GetWindowRect(progman, out var pr);
-        // 子窗坐标 = 虚拟屏坐标 - Progman 客户区原点；HWND_BOTTOM = Progman 子窗最底（DefView 之下）
-        SetWindowPos(hWnd, HWND_BOTTOM, monX - pr.Left, monY - pr.Top, monW, monH, 0);
-        long ex = GetExtendedStyle(hWnd);
-        SetExtendedStyle(hWnd, ex | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-    }
 
-    private static long GetStyle(IntPtr hWnd)
-        => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, GWL_STYLE).ToInt64() : GetWindowLong32(hWnd, GWL_STYLE);
-
-    private static void SetStyle(IntPtr hWnd, long value)
-    {
-        if (IntPtr.Size == 8) SetWindowLongPtr64(hWnd, GWL_STYLE, new IntPtr(value));
-        else SetWindowLong32(hWnd, GWL_STYLE, (int)value);
-    }
-
-    /// <summary>M4：桌面层子窗重定位（分辨率/排列变化）。坐标同 <see cref="AttachToDesktopLayer"/>。</summary>
-    public static void RepositionDesktopLayer(IntPtr hWnd, int monX, int monY, int monW, int monH)
-    {
-        var progman = FindWindow("Progman", null);
-        if (progman == IntPtr.Zero) return;
-        GetWindowRect(progman, out var pr);
-        const uint SWP_NOZORDER = 0x0004; // 保持桌面层内 Z（已在最底）
-        SetWindowPos(hWnd, IntPtr.Zero, monX - pr.Left, monY - pr.Top, monW, monH, SWP_NOZORDER);
-    }
 
     // ---------- M6：WorkerW 桌面层（Lively 方案） ----------
 
@@ -131,42 +90,14 @@ public static class WindowInterop
     private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
         uint flags, uint timeout, out IntPtr result);
 
-    /// <summary>M6：生成并定位壁纸层 WorkerW（Lively 同款）。发送 0x052C 让 shell 确保 WorkerW 存在。
-    /// explorer 两种稳定结构都要认（真机：重启后 DefView 常驻 Progman，壁纸 WorkerW 是 Progman 子序中
-    /// DefView 之后的那个；若 0x052C 新建了顶层 WorkerW，则 DefView 会被移过去）。</summary>
-    public static IntPtr SetupDesktopLayer()
-    {
-        var progman = FindWindow("Progman", null);
-        if (progman == IntPtr.Zero) return IntPtr.Zero;
-        SendMessageTimeout(progman, WM_SPAWNWORKERW, IntPtr.Zero, IntPtr.Zero, SMTO_NORMAL, 1000, out _);
-
-        // ① 常见稳定态：DefView 在 Progman 下 → 壁纸 WorkerW = Progman 子序中 DefView 之后
-        var defView = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
-        if (defView != IntPtr.Zero)
-        {
-            var inner = FindWindowEx(progman, defView, "WorkerW", null);
-            if (inner != IntPtr.Zero) return inner;
-        }
-
-        // ② 0x052C 新生态：DefView 被移到顶层 WorkerW 下 → 顶层 Z 序 Progman 之后的 WorkerW
-        var topWorker = FindWindowEx(IntPtr.Zero, progman, "WorkerW", null);
-        if (topWorker != IntPtr.Zero) return topWorker;
-
-        // ③ 兜底：DefView 直接挂在某顶层 WorkerW 下（部分 shell 结构）
-        if (defView == IntPtr.Zero)
-        {
-            IntPtr found = IntPtr.Zero;
-            EnumWindows((h, _) =>
-            {
-                if (FindWindowEx(h, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero) { found = h; return false; }
-                return true;
-            }, IntPtr.Zero);
-            if (found != IntPtr.Zero) return found;
-        }
-        return progman;
-    }
 
     private const int GWL_HWNDPARENT = -8;
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     /// <summary>找桌面图标视图窗口 SHELLDLL_DefView（owner 挂载目标）。</summary>
     public static IntPtr GetShellDefView()
@@ -205,29 +136,6 @@ public static class WindowInterop
         SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOACTIVATE);
     }
 
-    /// <summary>M6：把子进程窗口 SetParent 到 Progman 成为桌面子窗口。
-    /// 真机结论（2026-08）：WorkerW 方案在本机物理输出失效（DWM 截图缓冲有内容但显示器不输出，
-    /// 顶层窗口实验证实渲染链正常）→ 弃用 WorkerW，复刻 2110f61 真机验证过的 Progman 方案：
-    /// 壁纸 = HWND_BOTTOM + 去 LAYERED + TRANSPARENT 点击穿透；图标层 = HWND_TOPMOST 压 DefView + 去 LAYERED。</summary>
-    public static void AttachToDesktop(IntPtr hWnd, int monX, int monY, int monW, int monH,
-        bool iconLayer = false)
-    {
-        var progman = FindWindow("Progman", null);
-        if (progman == IntPtr.Zero) throw new System.ComponentModel.Win32Exception(0, "Progman not found");
-        SetParent(hWnd, progman);
-        long st = GetStyle(hWnd);
-        SetStyle(hWnd, (st & ~WS_POPUP) | WS_CHILD);
-        GetWindowRect(progman, out var pr);
-        int cx = monX - pr.Left, cy = monY - pr.Top;
-        var after = iconLayer ? HWND_TOPMOST : HWND_BOTTOM;
-        SetWindowPos(hWnd, after, cx, cy, monW, monH, iconLayer ? SWP_NOACTIVATE : 0);
-        long ex = GetExtendedStyle(hWnd);
-        // 去 WS_EX_LAYERED：child 形态下 Layered 表面渲染失效（2110f61 真机教训）。
-        ex &= ~WS_EX_LAYERED;
-        ex |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
-        if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
-        SetExtendedStyle(hWnd, ex);
-    }
 
     /// <summary>顶层形态重定位（拓扑变化）。屏幕坐标直接定位。</summary>
     public static void RepositionDesktopChild(IntPtr hWnd, int monX, int monY, int monW, int monH)
@@ -236,49 +144,10 @@ public static class WindowInterop
         SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
-    /// <summary>取桌面子窗口挂载目标 Progman（跨进程 SetParent 用）。</summary>
-    public static IntPtr GetProgman() => FindWindow("Progman", null);
-
-
-    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-    [DllImport("user32.dll")]
-    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
-
-    private const long WS_EX_TOPMOST = 0x00000008;
-    private static readonly HashSet<string> ShellClasses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "DV2ControlHost"
-    };
 
     /// <summary>M5 修闪：检测自己的窗口是否浮高——Z 序（顶→底）中若存在
     /// 「普通外部窗」（可见、非 topmost、非 shell 类）位于自己窗口**下方**，即自己浮到了普通窗口之上。
     /// 正常底置态：普通外部窗都在自己上方，不触发。</summary>
-    public static bool DetectOwnFloating(IReadOnlyList<IntPtr> ownHwnds)
-    {
-        var order = new List<IntPtr>();
-        EnumWindows((h, _) => { order.Add(h); return true; }, IntPtr.Zero);
-        var own = new HashSet<IntPtr>(ownHwnds);
-
-        int firstOwn = order.FindIndex(h => own.Contains(h));
-        if (firstOwn < 0) return false;
-
-        for (int i = firstOwn + 1; i < order.Count; i++)
-        {
-            var h = order[i];
-            if (own.Contains(h)) continue;
-            if (!IsWindowVisible(h)) continue;
-            if ((GetExtendedStyle(h) & WS_EX_TOPMOST) != 0) continue;
-            var sb = new StringBuilder(64);
-            GetClassName(h, sb, sb.Capacity);
-            if (ShellClasses.Contains(sb.ToString())) continue;
-            return true; // 普通外部窗在自己下方 = 自己浮高
-        }
-        return false;
-    }
 
     /// <summary>M4：把 <paramref name="hwnd"/> 精确插到 <paramref name="aboveHwnd"/> 正下方
     /// （hWndInsertAfter=aboveHwnd → 它在本窗之上）。壁纸窗置底于本屏图标层用，不靠创建顺序赌 Z-order。</summary>
@@ -288,28 +157,7 @@ public static class WindowInterop
             throw new Win32Exception(Marshal.GetLastWin32Error());
     }
 
-    /// <summary>点击穿透样式（不置底）：WS_EX_LAYERED|TRANSPARENT|NOACTIVATE。
-    /// 注：Win11 DWM 会对非透明 WPF 窗口抹掉 WS_EX_LAYERED（真机 ex 观察），无害——穿透靠 TRANSPARENT。</summary>
-    public static void ApplyClickThroughStyles(IntPtr hWnd)
-    {
-        long ex = GetExtendedStyle(hWnd);
-        SetExtendedStyle(hWnd, ex | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-    }
 
-    /// <summary>壁纸层：点击穿透（WS_EX_LAYERED|TRANSPARENT|NOACTIVATE）+ 置底。</summary>
-    public static void MakeClickThrough(IntPtr hWnd)
-    {
-        ApplyClickThroughStyles(hWnd);
-        SendToBottom(hWnd);
-    }
-
-    /// <summary>图标层：不点击穿透但同样不抢焦点（WS_EX_LAYERED|NOACTIVATE，去 TRANSPARENT）。M1 IconLayerWindow 用。</summary>
-    public static void MakeNonInteractiveTopmost(IntPtr hWnd)
-    {
-        long ex = GetExtendedStyle(hWnd);
-        SetExtendedStyle(hWnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE);
-        SendToBottom(hWnd);
-    }
 
     // ---------- M2 真机修复 Bug 2：NOACTIVATE 临时激活 ----------
     // 背景：IconLayerWindow 设 WS_EX_NOACTIVATE（桌面图标层不抢 explorer 焦点）→ app 进程从不获取前台
@@ -385,18 +233,4 @@ public static class WindowInterop
             if (attached) AttachThreadInput(curThread, fgThread, false);
         }
     }
-}
-
-/// <summary>跨进程 UI 抑制信号（命名 ManualResetEvent）：子进程弹系统菜单等需要前台化的
-/// 交互期间挂起，主进程 Z 看门狗 tick 前检查，避免前台化瞬间被判定浮高而全局重锚
-/// （真机踩坑：跨屏弹菜单 → 看门狗重锚另一屏 → 露壁纸闪烁）。</summary>
-public static class UiSuppress
-{
-    private const string EventName = @"Local\DesktopManager_UiSuppress";
-    private static EventWaitHandle? _evt;
-    private static EventWaitHandle Evt => _evt ??= new EventWaitHandle(false, EventResetMode.ManualReset, EventName);
-
-    public static void Enter() { try { Evt.Set(); } catch { } }
-    public static void Exit() { try { Evt.Reset(); } catch { } }
-    public static bool IsActive() { try { return Evt.WaitOne(0); } catch { return false; } }
 }

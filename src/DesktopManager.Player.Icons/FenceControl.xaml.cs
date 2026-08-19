@@ -21,7 +21,6 @@ public partial class FenceControl : UserControl
     private bool _folded;
     private bool _isEditing;
     private bool _isDragging;
-    private StackPanel? _selectedIconPanel; // M5-UI：盒内图标单选高亮
     private static readonly SolidColorBrush SelectedBrush = new(Color.FromArgb(0x40, 0x66, 0xCC, 0xFF));
     private Point _dragOrigin;     // 按下时鼠标相对父 Canvas 的位置
     private double _startLeft;     // 按下时控件在父 Canvas 的 Left
@@ -314,16 +313,13 @@ public partial class FenceControl : UserControl
         if (_selectedCell is not null && !ReferenceEquals(_selectedCell, cell))
             _selectedCell.Background = Brushes.Transparent;
         _selectedCell = cell;
-        _selectedIconPanel = panel;
         cell.Background = SelectedBrush;
     }
 
     /// <summary>清除盒内图标选中态（点盒子空白/图标增删时调）。</summary>
     public void ClearIconSelection()
     {
-        if (_selectedIconPanel is not null) _selectedIconPanel.Background = Brushes.Transparent;
         if (_selectedCell is not null) _selectedCell.Background = Brushes.Transparent;
-        _selectedIconPanel = null;
         _selectedCell = null;
     }
 

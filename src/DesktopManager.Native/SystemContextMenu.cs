@@ -196,23 +196,11 @@ public static class SystemContextMenu
 
                         // NOACTIVATE 窗口 TrackPopupMenu 弹不出（菜单需前台窗口接收消息，真机踩坑）
                         // → 弹出前临时前台化，结束恢复 NOACTIVATE。
-                        // 前台化会让窗口瞬时浮高：挂跨进程抑制信号，防主进程 Z 看门狗此刻重锚全部屏
-                        // （真机踩坑：跨屏弹菜单 → 看门狗全局重锚 → 另一屏露壁纸闪烁）。
-                        UiSuppress.Enter();
-                        long prevEx;
-                        int cmd;
-                        try
-                        {
-                            prevEx = WindowInterop.EnableActivation(ownerHwnd);
-                            GetCursorPos(out var pt);
-                            cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
-                            // 仅恢复 NOACTIVATE 样式，不 SendToBottom（owner 形态下置底会压破 owned 约束=图标层消失）
-                            WindowInterop.RestoreNoActivateStyle(ownerHwnd, prevEx);
-                        }
-                        finally
-                        {
-                            UiSuppress.Exit();
-                        }
+                        var prevEx = WindowInterop.EnableActivation(ownerHwnd);
+                        GetCursorPos(out var pt);
+                        var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
+                        // 仅恢复 NOACTIVATE 样式，不 SendToBottom（owner 形态下置底会压破 owned 约束=图标层消失）
+                        WindowInterop.RestoreNoActivateStyle(ownerHwnd, prevEx);
                         if (cmd == 0) return true; // 用户取消
                         var info = new CMINVOKECOMMANDINFO
                         {

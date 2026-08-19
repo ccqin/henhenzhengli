@@ -28,7 +28,6 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ImportIcon), "importIcon")]
 [JsonDerivedType(typeof(ExportFence), "exportFence")]
 [JsonDerivedType(typeof(ImportFence), "importFence")]
-[JsonDerivedType(typeof(MoveFencePos), "moveFencePos")]
 [JsonDerivedType(typeof(ClearSelection), "clearSelection")]
 [JsonDerivedType(typeof(SetAppearance), "setAppearance")]
 [JsonDerivedType(typeof(SetMenu), "setMenu")]
@@ -204,14 +203,6 @@ public sealed record ExportFence : IpcMessage
 public sealed record ImportFence : IpcMessage
 {
     public FenceDto Fence { get; init; } = new();
-    public double X { get; init; }
-    public double Y { get; init; }
-}
-
-/// <summary>同窗 Fence 拖动换位置。</summary>
-public sealed record MoveFencePos : IpcMessage
-{
-    public string FenceId { get; init; } = "";
     public double X { get; init; }
     public double Y { get; init; }
 }

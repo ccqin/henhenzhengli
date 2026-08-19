@@ -79,11 +79,6 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>M6：跨屏协调桥（IPC 到主进程中转），Attach 后注入。</summary>
     public ICrossScreenHost? Host { get; set; }
 
-    private void AskBottom()
-    {
-        // M6：本窗口是 WorkerW 子窗口（主进程 SetParent），Z-order 由挂载顺序决定，
-        // 不再 SendToBottom（会把图标层压到壁纸子窗口之下）。
-    }
 
     /// <summary>M3-T6：分辨率/排列变化后重定位到新工作区（图标本地坐标不换算——工作区变小时超界项容忍，backlog）。</summary>
     public void RepositionTo(MonitorInfo monitor)
@@ -313,17 +308,14 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
             WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
-            AskBottom();
             // 真机修复（图标层浮在文件夹窗口上面）：SourceInitialized 时窗口尚未真正 Show，
             // WPF 随后把新窗口插入 Z-order 顶部，上面的 SendToBottom 被覆盖。
             // 双重保障：① ContentRendered（窗口已可见）后再置底一次；
             // ② Activated 守卫：非输入态被意外激活（Alt+Tab/其他路径）立即压回底部。
-            ContentRendered += (_, _) => AskBottom();
             Activated += (_, _) =>
             {
                 if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底
-                AskBottom();
-            };
+                };
         };
 
         // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
