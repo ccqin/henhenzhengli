@@ -90,6 +90,14 @@ public static class SystemContextMenu
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out POINT pt);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
@@ -193,14 +201,28 @@ public static class SystemContextMenu
                     {
                         if (cm.QueryContextMenu(hmenu, 0, 1, 0x7FFF, CMF_NORMAL) < 0) return false;
                         if (hiddenTexts is { Count: > 0 }) RemoveHiddenItems(hmenu, hiddenTexts);
+                        int cmd;
 
-                        // NOACTIVATE 窗口 TrackPopupMenu 弹不出（菜单需前台窗口接收消息，真机踩坑）
-                        // → 弹出前临时前台化，结束恢复 NOACTIVATE。
-                        var prevEx = WindowInterop.EnableActivation(ownerHwnd);
-                        GetCursorPos(out var pt);
-                        var cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
-                        // 仅恢复 NOACTIVATE 样式，不 SendToBottom（owner 形态下置底会压破 owned 约束=图标层消失）
-                        WindowInterop.RestoreNoActivateStyle(ownerHwnd, prevEx);
+                        // 菜单需要前台输入权限才能弹出。真机教训（2026-08-19）：
+                        // ① 直接弹（NOACTIVATE）→ 菜单不显示；
+                        // ② SetForegroundWindow(我们窗口) → 前台切到桌面 owned 窗口 = 系统 ShowDesktop 语义
+                        //   → 全部窗口被最小化（像 Win+D）；
+                        // → 正解：AttachThreadInput 共享前台线程的输入状态（原前台窗口保持前台），
+                        //   弹完 detach。shell 上下文菜单经典做法。
+                        var fg = GetForegroundWindow();
+                        uint fgThread = GetWindowThreadProcessId(fg, out _);
+                        uint curThread = GetCurrentThreadId();
+                        bool attached = fgThread != 0 && fgThread != curThread &&
+                                        AttachThreadInput(curThread, fgThread, true);
+                        try
+                        {
+                            GetCursorPos(out var pt);
+                            cmd = TrackPopupMenuEx(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.X, pt.Y, ownerHwnd, IntPtr.Zero);
+                        }
+                        finally
+                        {
+                            if (attached) AttachThreadInput(curThread, fgThread, false);
+                        }
                         if (cmd == 0) return true; // 用户取消
                         var info = new CMINVOKECOMMANDINFO
                         {
