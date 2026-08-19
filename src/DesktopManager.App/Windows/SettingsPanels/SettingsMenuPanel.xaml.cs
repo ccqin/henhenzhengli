@@ -147,14 +147,12 @@ public partial class SettingsMenuPanel : UserControl
         style.Setters.Add(new System.Windows.Setter(ListBoxItem.ForegroundProperty, System.Windows.Media.Brushes.White));
         style.Setters.Add(new System.Windows.Setter(ListBoxItem.BackgroundProperty, System.Windows.Media.Brushes.Transparent));
         style.Setters.Add(new System.Windows.Setter(ListBoxItem.PaddingProperty, new Thickness(8, 5, 8, 5)));
-        style.Triggers.Add(new System.Windows.Trigger(ListBoxItem.IsMouseOverProperty, true)
-        {
-            Setters = { new System.Windows.Setter(ListBoxItem.BackgroundProperty, hover) },
-        });
-        style.Triggers.Add(new System.Windows.Trigger(ListBoxItem.IsSelectedProperty, true)
-        {
-            Setters = { new System.Windows.Setter(ListBoxItem.BackgroundProperty, sel) },
-        });
+        var hoverTrg = new System.Windows.Trigger { Property = ListBoxItem.IsMouseOverProperty, Value = true };
+        hoverTrg.Setters.Add(new System.Windows.Setter(ListBoxItem.BackgroundProperty, hover));
+        style.Triggers.Add(hoverTrg);
+        var selTrg = new System.Windows.Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+        selTrg.Setters.Add(new System.Windows.Setter(ListBoxItem.BackgroundProperty, sel));
+        style.Triggers.Add(selTrg);
         list.ItemContainerStyle = style;
         foreach (var it in items)
         {
