@@ -27,8 +27,10 @@ public static class IconExtractorNative
     private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes,
         ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
 
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr SHGetFileInfoPidl(IntPtr pidl, uint dwFileAttributes,
+    // SHGetFileInfo 只有一个导出：pszPath 位传 pidl 时以 SHGFI_PIDL 标志区分（不存在
+    // “SHGetFileInfoPidl” 导出——曾误命名导致 EntryPointNotFoundException 崩溃循环）。
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "SHGetFileInfo")]
+    private static extern IntPtr SHGetFileInfoByPidl(IntPtr pidl, uint dwFileAttributes,
         ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -77,7 +79,7 @@ public static class IconExtractorNative
                 try
                 {
                     var f = new SHFILEINFO();
-                    SHGetFileInfoPidl(pidl, 0, ref f, (uint)Marshal.SizeOf<SHFILEINFO>(),
+                    SHGetFileInfoByPidl(pidl, 0, ref f, (uint)Marshal.SizeOf<SHFILEINFO>(),
                         SHGFI_ICON | SHGFI_PIDL | (size <= 16 ? SHGFI_SMALLICON : SHGFI_LARGEICON));
                     if (f.hIcon != IntPtr.Zero) return f.hIcon;
                 }
