@@ -56,11 +56,8 @@ public sealed class MultiMonitorHost
     // path → 归属屏（config 位置记录解析出的在线归属）：启动分发 hint。
     private Dictionary<string, string> _looseAssignHint = new(StringComparer.OrdinalIgnoreCase);
 
-    // 防抖保存：任一子进程 LayoutChanged → 500ms 后聚合落盘。
-    private readonly System.Threading.Timer _saveTimer;
-    private readonly object _saveLock = new();
-    private static readonly TimeSpan SaveDebounce = TimeSpan.FromMilliseconds(500);
-    private volatile bool _savingDisabled;
+    // M6 拆分：持久化委托给 PersistenceService（防抖/立即保存）。
+    private readonly Services.PersistenceService _persistence;
 
     // 跨屏迁移中转的 pending 槽（用户操作低频，单槽 + 后到覆盖足够）。
     private (string TargetMonitor, string? Path, string? FenceId, double X, double Y)? _pendingImport;
@@ -71,8 +68,7 @@ public sealed class MultiMonitorHost
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
-        _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
-            Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _persistence = new Services.PersistenceService(store, BuildAggregatedConfig);
         // Z 看门狗已移除（2026-08-19）：owner=DefView 约束 + WM_MOUSEACTIVATE/MA_NOACTIVATE 双保险
         // 已根治浮高源；看门狗反而在交互（右键菜单等）期间误判重锚造成闪屏。
     }
@@ -92,7 +88,6 @@ public sealed class MultiMonitorHost
         _wallpaperPlayers.Clear();
         _orphanFences.Clear(); _orphanPositions.Clear(); _orphanPaths.Clear();
         _wallpapers.Clear(); _displayGroups = new List<DisplayGroup>();
-        lock (_saveLock) { if (!_savingDisabled) _store.Save(snapshot); }
         AttachCore(snapshot);
         if (_lastAll.Count > 0) ApplyInitialSnapshot(_lastAll);
     }
@@ -447,13 +442,7 @@ public sealed class MultiMonitorHost
 
     /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null。</summary>
     private (WallpaperConfig? Cfg, DisplayGroup? Group) ResolveWallpaper(string monitorId)
-    {
-        var g = _displayGroups.FirstOrDefault(g =>
-            !string.IsNullOrWhiteSpace(g.WallpaperPath) && g.MonitorIds.Contains(monitorId));
-        if (g is not null)
-            return (new WallpaperConfig { MonitorId = monitorId, Kind = g.WallpaperKind, Path = g.WallpaperPath }, g);
-        return (_wallpapers.FirstOrDefault(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal)), null);
-    }
+        => WallpaperResolver.Resolve(monitorId, _wallpapers, _displayGroups);
 
     /// <summary>M4（M6 IPC 化）：壁纸配置下发给子进程（无配置 → 空路径隐藏）。</summary>
     private void ApplyWallpaperTo(string monitorId)
@@ -461,21 +450,17 @@ public sealed class MultiMonitorHost
         if (!_wallpaperPlayers.TryGetValue(monitorId, out var player)) return;
         var (cfg, group) = ResolveWallpaper(monitorId);
 
-        // M5-T3：组模式虚拟画布 = 组内在线成员 rect 的 bounding box；在线成员 <2 → 降级单屏。
+        // M5-T3：组模式虚拟画布（Core.WallpaperResolver 纯函数，单测覆盖）；在线成员 <2 → 降级单屏。
         IntRect? canvas = null;
         IntRect? monRect = null;
         if (group is not null)
         {
-            var online = MonitorEnumerator.Enumerate()
+            var onlineRects = MonitorEnumerator.Enumerate()
                 .Where(m => group.MonitorIds.Contains(m.PersistentId))
+                .Select(m => (m.PersistentId, new IntRect(m.X, m.Y, m.X + m.Width, m.Y + m.Height)))
                 .ToList();
-            if (online.Count >= 2)
-            {
-                var rects = online.Select(m => new IntRect(m.X, m.Y, m.X + m.Width, m.Y + m.Height)).ToList();
-                canvas = CrossScreenLayout.Canvas(rects);
-                var me = online.First(x => x.PersistentId == monitorId);
-                monRect = new IntRect(me.X, me.Y, me.X + me.Width, me.Y + me.Height);
-            }
+            var cc = WallpaperResolver.CalcCanvas(monitorId, onlineRects);
+            if (cc is { } v) { canvas = v.Canvas; monRect = v.MonRect; }
         }
 
         Log.Information("壁纸分发(IPC): {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
@@ -506,14 +491,7 @@ public sealed class MultiMonitorHost
     {
         // 1. 现状落盘（含孤儿）。
         AppConfig snapshot;
-        try
-        {
-            snapshot = BuildAggregatedConfig();
-            lock (_saveLock)
-            {
-                if (!_savingDisabled) _store.Save(snapshot);
-            }
-        }
+        try { snapshot = _persistence.SaveAndReturn(); }
         catch (Exception ex)
         {
             Log.Error(ex, "RebuildToMatchTopology：重建前保存失败，放弃重建（保现状）");
@@ -535,37 +513,14 @@ public sealed class MultiMonitorHost
             Log.Information("拓扑重建：显示器离线，停止子进程 {Id}", goneId);
         }
 
-        // 3. 以 snapshot 为新基线重算孤儿 + 每屏归属（孤儿集合整体重置）。
-        _orphanFences.Clear(); _orphanPositions.Clear(); _orphanPaths.Clear();
-        var fenceAssign = MonitorAssignment.FenceAssignments(snapshot.Fences, online);
-        var looseAssign = MonitorAssignment.LooseAssignments(snapshot.IconPositions, online);
-        foreach (var f in snapshot.Fences)
-        {
-            if (fenceAssign[f.Id] is not null) continue;
-            _orphanFences.Add(f);
-            foreach (var p in f.IconFilePaths) _orphanPaths.Add(p);
-        }
-        foreach (var p in snapshot.IconPositions)
-        {
-            if (looseAssign[p.FilePath] is not null) continue;
-            _orphanPositions.Add(p);
-            _orphanPaths.Add(p.FilePath);
-        }
-        _looseAssignHint = looseAssign
-            .Where(kv => kv.Value is not null)
-            .ToDictionary(kv => kv.Key, kv => kv.Value!, StringComparer.OrdinalIgnoreCase);
-        var myFencesByMon = monitors.ToDictionary(m => m.PersistentId, _ => new List<FenceConfig>());
-        var myPositionsByMon = monitors.ToDictionary(m => m.PersistentId, _ => new List<IconPosition>());
-        foreach (var f in snapshot.Fences)
-        {
-            var a = fenceAssign[f.Id];
-            if (a is not null) myFencesByMon[a].Add(f);
-        }
-        foreach (var p in snapshot.IconPositions)
-        {
-            var a = looseAssign[p.FilePath];
-            if (a is not null) myPositionsByMon[a].Add(p);
-        }
+        // 3. 以 snapshot 为新基线重算孤儿 + 每屏归属（Core.TopologyRebuild 纯函数，单测覆盖）。
+        var calc = TopologyRebuild.Calculate(snapshot, liveIds);
+        _orphanFences.Clear(); _orphanFences.AddRange(calc.OrphanFences);
+        _orphanPositions.Clear(); _orphanPositions.AddRange(calc.OrphanPositions);
+        _orphanPaths.Clear(); _orphanPaths.UnionWith(calc.OrphanPaths);
+        _looseAssignHint = calc.LooseHints;
+        var myFencesByMon = calc.FencesByMon;
+        var myPositionsByMon = calc.PositionsByMon;
 
         // 4. 存活屏：主进程直接 Win32 重定位（child 形态下 WPF Left/Top 会双偏移，位置纯 Win32 管）。
         foreach (var m in monitors)
@@ -619,20 +574,11 @@ public sealed class MultiMonitorHost
     }
 
     /// <summary>按归属为某屏切分图标全集（与 Distribute 语义一致，供初始/重建/重启补发）。</summary>
-    private List<IconDto> SplitFor(string monitorId, IEnumerable<IconItem> all)
-    {
-        var result = new List<IconDto>();
-        foreach (var item in all)
-        {
-            if (_orphanPaths.Contains(item.FilePath)) continue;
-            var owner = FindOwnerMonitor(item.FilePath);
-            if (owner is null && _looseAssignHint.TryGetValue(item.FilePath, out var hint)
-                && _iconChildren.ContainsKey(hint)) owner = hint;
-            if (owner is null) owner = PrimaryMonitorId;
-            if (owner == monitorId) result.Add(ToDto(item));
-        }
-        return result;
-    }
+    // M6 下沉：路由逻辑在 Core.IconRouter（三级归属：持有→hint→主屏，孤儿跳过；单测覆盖）。
+    // hint 字典构建时已只含在线归属（TopologyRebuild），无需再查在线性。
+    private List<IconDto> SplitFor(string monitorId, IEnumerable<IconItem> all) =>
+        IconRouter.SplitFor(monitorId, all, FindOwnerMonitor, _looseAssignHint, PrimaryMonitorId, _orphanPaths)
+            .Select(ToDto).ToList();
 
     /// <summary>增量分发（sync.Changed）。Removed 广播所有子进程（各自 reconcile no-op 防归属竞态）；
     /// Added 路由到归属屏（缓存归属 → hint → 主屏）。孤儿 path 跳过。</summary>
@@ -672,32 +618,7 @@ public sealed class MultiMonitorHost
 
     // ---------- 聚合持久化 ----------
 
-    private void RequestSave()
-    {
-        if (_savingDisabled) return;
-        lock (_saveLock)
-        {
-            _saveTimer.Change(SaveDebounce, Timeout.InfiniteTimeSpan);
-        }
-    }
-
-    private void OnSaveTimerElapsed()
-    {
-        if (_savingDisabled) return;
-        try
-        {
-            var appConfig = BuildAggregatedConfig();
-            lock (_saveLock)
-            {
-                if (_savingDisabled) return;
-                _store.Save(appConfig);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "MultiMonitorHost 防抖保存失败");
-        }
-    }
+    private void RequestSave() => _persistence.RequestSave();
 
     /// <summary>聚合所有子进程布局缓存 + 孤儿配置（离线屏数据不丢）。</summary>
     private AppConfig BuildAggregatedConfig()
@@ -721,24 +642,7 @@ public sealed class MultiMonitorHost
     }
 
     /// <summary>立即聚合保存（不等防抖）。OnExit 调用；随后 CloseAll。</summary>
-    public void SaveAllNow()
-    {
-        _savingDisabled = true;
-        try { _saveTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
-        catch { /* ObjectDisposedException 忽略 */ }
-
-        try
-        {
-            lock (_saveLock)
-            {
-                _store.Save(BuildAggregatedConfig());
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "MultiMonitorHost 退出保存失败");
-        }
-    }
+    public void SaveAllNow() => _persistence.SaveNow();
 
     /// <summary>停止所有子进程（OnExit，SaveAllNow 之后）。</summary>
     public void CloseAll()
