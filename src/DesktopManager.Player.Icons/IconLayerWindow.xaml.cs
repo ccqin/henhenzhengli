@@ -568,10 +568,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 间距跟随图标尺寸档（M6 美化）：32→90x96 / 48→100x116 / 64→120x140
         double stepX = IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120;
         double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
-        const int cols = 10;
-        for (int row = 0; ; row++)
+        // M6 修复：列优先（原生桌面同款）——行数受限于工作区高度，排满一列右移一列，
+        // 永不排到窗口外（此前 10 列×无限行，图标多时排到 Y=1640 屏外被裁剪不可见）。
+        int maxRows = Math.Max(1, (int)((ActualHeight > 0 ? ActualHeight : SystemParameters.WorkArea.Height) - originY - 8) / (int)stepY);
+        for (int col = 0; ; col++)
         {
-            for (int col = 0; col < cols; col++)
+            for (int row = 0; row < maxRows; row++)
             {
                 double x = originX + col * stepX;
                 double y = originY + row * stepY;
