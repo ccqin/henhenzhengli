@@ -68,8 +68,6 @@ public sealed class MultiMonitorHost
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
 
-    }
-
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏启动壁纸 + 图标层子进程并挂 WorkerW。
     /// 零显示器（理论不发生）抛异常，由 App 走回滚（RestoreExplorer）。</summary>
     public void Attach() => AttachCore(_store.Load());
