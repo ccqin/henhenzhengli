@@ -17,7 +17,8 @@
 
   <ItemGroup>
     <Resource Include="Assets\desktop-tool.ico" />
-    <Resource Include="Assets\tray.ico" />
+    <Resource Include="Assets\tray32.png" />
+    <Resource Include="Assets\desktop-tool.ico" />
   </ItemGroup>
 
   <PropertyGroup>
