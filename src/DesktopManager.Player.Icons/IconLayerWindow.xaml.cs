@@ -395,8 +395,27 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var miNew = new MenuItem { Header = "新建收纳盒" };
         miNew.Click += (_, _) => CreateNewFence();
         menu.Items.Add(miNew);
+
+        // 排序方式（重排散落图标到网格；收纳盒内不动）
+        var sort = new MenuItem { Header = "排序方式" };
+        var byName = new MenuItem { Header = "名称" };
+        byName.Click += (_, _) => SortLoose(i => i.DisplayName, StringComparer.OrdinalIgnoreCase);
+        sort.Items.Add(byName);
+        menu.Items.Add(sort);
         // 壁纸设置统一在托盘设置窗口（用户决策：桌面右键不再出现壁纸入口）。
         return menu;
+    }
+
+    /// <summary>按选择器重排散落图标到网格（列优先）：全部先离格再按序回填，避免旧位干扰找空位。</summary>
+    private void SortLoose(Func<IconItem, string> keySelector, StringComparer comparer)
+    {
+        var ordered = _looseIcons.OrderBy(keySelector, comparer).ToList();
+        foreach (var i in _looseIcons) { i.X = -1; i.Y = -1; } // 先全离格（INPC 同步 UI）
+        foreach (var i in ordered)
+        {
+            (i.X, i.Y) = FindFreeLooseSlot();
+        }
+        RequestSave(); // 布局上报（主进程防抖落盘）
     }
 
     /// <summary>FenceControl 右键菜单（重命名 / 删除本 Fence）。</summary>
