@@ -9,8 +9,8 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE9F9;" Style="{StaticResource Glyph}"/>
-                            <TextBlock Text="日志与操作记录" Style="{StaticResource CardTitle}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="&#xE9F9;" Style="{DynamicResource Glyph}"/>
+                            <TextBlock Text="日志与操作记录" Style="{DynamicResource CardTitle}" Margin="10,0,0,0" VerticalAlignment="Center"/>
                             <ComboBox x:Name="LogLevelFilter" Width="110" Margin="16,0,0,0" SelectedIndex="0"
                                       SelectionChanged="LogFilter_Changed">
                                 <ComboBoxItem Content="全部"/>
