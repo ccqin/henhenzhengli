@@ -1,0 +1,56 @@
+﻿<UserControl x:Class="DesktopManager.App.Windows.SettingsPanels.SettingsAppearancePanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Style="{DynamicResource Card}">
+
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE771;" Style="{StaticResource Glyph}"/>
+                            <TextBlock Text="外观" Style="{StaticResource CardTitle}" Margin="10,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="桌面图标" Style="{StaticResource Label}"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="IconSizeS" Content="小（32px）" Style="{StaticResource RadioTile}" Checked="IconSize_Checked" Tag="32"/>
+                            <RadioButton x:Name="IconSizeM" Content="中（48px）" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="IconSize_Checked" Tag="48"/>
+                            <RadioButton x:Name="IconSizeL" Content="大（64px）" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="IconSize_Checked" Tag="64"/>
+                        </StackPanel>
+                        <TextBlock Text="文字标签风格" Style="{StaticResource Label}" Margin="0,14,0,0"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="LabelShadow" Content="原生风（文字阴影）" Style="{StaticResource RadioTile}" Checked="LabelStyle_Checked" Tag="shadow"/>
+                            <RadioButton x:Name="LabelPill" Content="现代胶囊" Style="{StaticResource RadioTile}" Margin="8,0,0,0" Checked="LabelStyle_Checked" Tag="pill"/>
+                        </StackPanel>
+                        <!-- 实时预览（字体图标示意尺寸；标签跟随风格选择切换样式） -->
+                        <TextBlock Text="预览" Style="{StaticResource Label}" Margin="0,14,0,0"/>
+                        <Border Background="#3A4A5C" CornerRadius="6" Height="150" Margin="0,4,0,0" ClipToBounds="True">
+                            <StackPanel Orientation="Horizontal" Margin="20,0">
+                                <StackPanel Width="110" Margin="0,16,0,0">
+                                    <TextBlock x:Name="PreviewGlyph" Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" Foreground="#E8F0FF"
+                                               HorizontalAlignment="Center"
+                                               FontSize="{Binding Text, ElementName=PreviewIconSize}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsChecked, ElementName=LabelShadow}" Value="True">
+                                                        <Setter Property="Effect">
+                                                            <Setter.Value>
+                                                                <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.9"/>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Border x:Name="PreviewLabel" CornerRadius="8" Padding="6,2" HorizontalAlignment="Center" Margin="0,4,0,0">
+                                        <TextBlock Text="示例文件.txt" Foreground="White" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="90"/>
+                                    </Border>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="PreviewIconSize" Text="48" Visibility="Collapsed"/>
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,12,0,0"
+                                   Text="改动立即生效并保存。新图标的网格排位间距跟随尺寸档；已有图标位置不变。"/>
+                    </StackPanel>
+                
+    </Border>
+</UserControl>
