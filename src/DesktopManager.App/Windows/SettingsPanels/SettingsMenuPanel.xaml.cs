@@ -113,12 +113,17 @@ public partial class SettingsMenuPanel : UserControl
         }
     }
 
-    /// <summary>枚举系统菜单项（以桌面第一个文件为例），弹列表供点选加入隐藏。</summary>
+    /// <summary>枚举系统菜单项：默认以桌面第一个文件为样本，弹窗内可换文件重枚举。</summary>
     private void SysMenuEnumerate_Click(object sender, RoutedEventArgs e)
     {
-        string sample = System.IO.Directory.EnumerateFiles(
+        var sample = System.IO.Directory.EnumerateFiles(
             Environment.GetFolderPath(Environment.SpecialFolder.Desktop)).FirstOrDefault()
             ?? "C:\\Windows\\notepad.exe";
+        ShowMenuItemsDialog(sample);
+    }
+
+    private void ShowMenuItemsDialog(string sample)
+    {
         List<string> items;
         try { items = DesktopManager.Native.SystemContextMenu.EnumerateTopLevel(sample); }
         catch (Exception ex)
@@ -134,8 +139,16 @@ public partial class SettingsMenuPanel : UserControl
 
         var hint = new TextBlock
         {
-            Text = $"「{System.IO.Path.GetFileName(sample)}」的系统菜单项（点击加入隐藏）：",
-            Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(12),
+            Text = $"示例文件「{System.IO.Path.GetFileName(sample)}」的系统菜单项（不同类型文件的菜单不同；点击条目加入隐藏）：",
+            Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(12, 10, 12, 4),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var pickBtn = new Button
+        {
+            Content = "📂 换一个文件试试…",
+            Margin = new Thickness(12, 0, 12, 8),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(10, 4, 10, 4),
         };
         var list = new ListBox { Margin = new Thickness(12, 0, 12, 12), MaxHeight = 380, BorderThickness = new Thickness(0) };
         // 深色主题：ListBox/项深底浅字，选中/hover 深蓝高亮（默认白底会把白字淹掉）
@@ -170,7 +183,16 @@ public partial class SettingsMenuPanel : UserControl
             WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
             Background = new System.Windows.Media.SolidColorBrush(
                 System.Windows.Media.Color.FromRgb(0x1B, 0x1B, 0x26)),
-            Content = new StackPanel { Children = { hint, list } },
+            Content = new StackPanel { Children = { hint, pickBtn, list } },
+        };
+        pickBtn.Click += (_, _) =>
+        {
+            var ofd = new Microsoft.Win32.OpenFileDialog { Title = "选择示例文件（查看该类型文件的系统菜单）" };
+            if (ofd.ShowDialog(dlg) == true)
+            {
+                dlg.Close();
+                ShowMenuItemsDialog(ofd.FileName);
+            }
         };
         dlg.ShowDialog();
     }
