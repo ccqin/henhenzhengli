@@ -234,7 +234,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         {
             if (menu.Items.Count > 0) menu.Items.Add(new Separator());
             var mi = new MenuItem { Header = "更多操作 ▸" };
-            mi.Click += (_, _) => DesktopManager.Native.SystemContextMenu.Show(_hwnd, path, Menu.SystemHidden);
+            mi.Click += (_, _) =>
+            {
+                // 事件 handler 异常会崩进程（真机踩坑：InvokeCommand 失败的异常冒泡 = 子进程退出重启）
+                try { DesktopManager.Native.SystemContextMenu.Show(_hwnd, path, Menu.SystemHidden); }
+                catch (Exception ex) { OpenReported?.Invoke(path, $"系统菜单执行失败: {ex.Message}"); }
+            };
             menu.Items.Add(mi);
         }
     }

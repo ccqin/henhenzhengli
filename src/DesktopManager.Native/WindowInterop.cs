@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.Threading;
 using System.Runtime.InteropServices;
+
 using System.Text;
 
 namespace DesktopManager.Native;
@@ -383,4 +385,18 @@ public static class WindowInterop
             if (attached) AttachThreadInput(curThread, fgThread, false);
         }
     }
+}
+
+/// <summary>跨进程 UI 抑制信号（命名 ManualResetEvent）：子进程弹系统菜单等需要前台化的
+/// 交互期间挂起，主进程 Z 看门狗 tick 前检查，避免前台化瞬间被判定浮高而全局重锚
+/// （真机踩坑：跨屏弹菜单 → 看门狗重锚另一屏 → 露壁纸闪烁）。</summary>
+public static class UiSuppress
+{
+    private const string EventName = @"Local\DesktopManager_UiSuppress";
+    private static EventWaitHandle? _evt;
+    private static EventWaitHandle Evt => _evt ??= new EventWaitHandle(false, EventResetMode.ManualReset, EventName);
+
+    public static void Enter() { try { Evt.Set(); } catch { } }
+    public static void Exit() { try { Evt.Reset(); } catch { } }
+    public static bool IsActive() { try { return Evt.WaitOne(0); } catch { return false; } }
 }
