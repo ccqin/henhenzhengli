@@ -68,29 +68,6 @@ public sealed class MultiMonitorHost
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
 
-    // M6 终态：Z 看门狗——顶层形态下子进程窗口可能被浮高（M4 真机教训），2s 条件检测重锚。
-    private System.Windows.Threading.DispatcherTimer? _zWatchdog;
-
-    public MultiMonitorHost(IConfigStore store)
-    {
-        _store = store;
-        _saveTimer = new System.Threading.Timer(_ => OnSaveTimerElapsed(), null,
-            Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-        _zWatchdog = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _zWatchdog.Tick += (_, _) =>
-        {
-            // 子进程前台化交互中（系统菜单等，跨进程抑制信号）：此刻窗口瞬时浮高是预期行为，跳过。
-            if (UiSuppress.IsActive()) return;
-            // Win+D 免疫已由 owner=DefView 方案解决（WindowInterop.AttachTopLevel），无需恢复逻辑。
-            var own = _iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd)
-                .Concat(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd)).ToList();
-            if (own.Count > 0 && WindowInterop.DetectOwnFloating(own))
-            {
-                Log.Information("Z 看门狗：检测到浮高，重锚底序");
-                foreach (var mon in _iconChildren.Keys.ToList()) BottomPair(mon);
-            }
-        };
-        _zWatchdog.Start();
     }
 
     /// <summary>枚举显示器 → 加载 config → 按归属切分 → 每屏启动壁纸 + 图标层子进程并挂 WorkerW。
