@@ -64,6 +64,8 @@ public partial class SettingsWindow : Window
         _host = host;
         InitializeComponent();
         _groups = host.Groups.ToList();
+        PanelAppearance.Host = host;
+        PanelMenu.Host = host;
         var v = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
         VersionText.Text = v is null ? "" : $"v{v.Major}.{v.Minor}.{v.Build}";
         RefreshMonitors();
@@ -205,13 +207,7 @@ public partial class SettingsWindow : Window
                     {
                         try
                         {
-                            var bmp = new BitmapImage();
-                            bmp.BeginInit();
-                            bmp.UriSource = new Uri(group.WallpaperPath);
-                            bmp.DecodePixelWidth = 800;
-                            bmp.CacheOption = BitmapCacheOption.OnLoad;
-                            bmp.EndInit();
-                            bmp.Freeze();
+                            var bmp = Services.ImageLoader.Load(group.WallpaperPath, 800) as BitmapImage;
 
                             double relX = (m.X - gMinX) / gW;
                             double relY = (m.Y - gMinY) / gH;
@@ -246,21 +242,8 @@ public partial class SettingsWindow : Window
     private static Brush? ThumbnailBrush(WallpaperConfig? cfg)
     {
         if (cfg is null || cfg.Kind == WallpaperKind.Video || !File.Exists(cfg.Path)) return null;
-        try
-        {
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.UriSource = new Uri(cfg.Path);
-            bmp.DecodePixelWidth = 300;
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.EndInit();
-            bmp.Freeze();
-            return new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
-        }
-        catch
-        {
-            return null;
-        }
+        var bmp = Services.ImageLoader.Load(cfg.Path, 300);  // 非常规 JPEG 走 GDI+ 兜底（与壁纸渲染同语义）
+        return bmp is null ? null : new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
     }
 
     private static string ShortName(string persistentId)

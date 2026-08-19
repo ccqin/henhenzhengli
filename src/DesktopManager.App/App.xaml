@@ -6,7 +6,7 @@
     <Application.Resources>
         <tb:TaskbarIcon x:Key="TrayIcon"
                         ToolTipText="DesktopManager"
-                        IconSource="/Assets/app.ico" NoLeftClickDelay="True"
+                        IconSource="/Assets/desktop-tool.ico" NoLeftClickDelay="True"
                         Visibility="Visible">
             <tb:TaskbarIcon.ContextMenu>
                 <ContextMenu>
