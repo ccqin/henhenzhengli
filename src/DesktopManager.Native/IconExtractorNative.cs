@@ -27,6 +27,16 @@ public static class IconExtractorNative
     private static extern IntPtr SHGetFileInfo(string pszPath, uint dwFileAttributes,
         ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SHGetFileInfoPidl(IntPtr pidl, uint dwFileAttributes,
+        ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHParseDisplayName(string pszName, IntPtr pbc, out IntPtr ppidl,
+        uint sfgaoIn, out uint psfgaoOut);
+
+    private const uint SHGFI_PIDL = 0x000000008;
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
@@ -58,6 +68,23 @@ public static class IconExtractorNative
     /// 返回 IntPtr.Zero 表示失败。</summary>
     public static IntPtr GetHIcon(string filePath, int size = 32)
     {
+        // shell 虚拟对象（::{CLSID}，此电脑/回收站）：Win11 的 SHGetFileInfo 不认纯 CLSID 字符串
+        // （hIcon=0，真机实测），必须 PIDL 方式（SHParseDisplayName + SHGFI_PIDL）。
+        if (filePath.StartsWith("::", StringComparison.Ordinal))
+        {
+            if (SHParseDisplayName(filePath, IntPtr.Zero, out var pidl, 0, out _) == 0 && pidl != IntPtr.Zero)
+            {
+                try
+                {
+                    var f = new SHFILEINFO();
+                    SHGetFileInfoPidl(pidl, 0, ref f, (uint)Marshal.SizeOf<SHFILEINFO>(),
+                        SHGFI_ICON | SHGFI_PIDL | (size <= 16 ? SHGFI_SMALLICON : SHGFI_LARGEICON));
+                    if (f.hIcon != IntPtr.Zero) return f.hIcon;
+                }
+                finally { Marshal.FreeCoTaskMem(pidl); }
+            }
+            return IntPtr.Zero;
+        }
         if (size > 32)
         {
             var fi = new SHFILEINFO();
