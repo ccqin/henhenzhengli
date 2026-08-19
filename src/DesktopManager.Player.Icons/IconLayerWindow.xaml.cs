@@ -1118,9 +1118,15 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 MessageBoxButton.OKCancel, MessageBoxImage.Question);
             if (r != MessageBoxResult.OK) return;
 
-            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
-                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            // 文件夹走 DeleteDirectory（M6：桌面文件夹也是图标；DeleteFile 对目录抛异常）
+            if (Directory.Exists(path))
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(path,
+                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            else
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path,
+                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
             AuditReported?.Invoke("icon", "delete", name, path);
             // 不手动刷新：DesktopSync.Changed → ApplyDiff 自动移除该图标。
         }
