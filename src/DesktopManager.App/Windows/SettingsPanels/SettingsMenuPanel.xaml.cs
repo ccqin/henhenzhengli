@@ -137,10 +137,28 @@ public partial class SettingsMenuPanel : UserControl
             Text = $"「{System.IO.Path.GetFileName(sample)}」的系统菜单项（点击加入隐藏）：",
             Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(12),
         };
-        var list = new ListBox { Margin = new Thickness(12, 0, 12, 12), MaxHeight = 380 };
+        var list = new ListBox { Margin = new Thickness(12, 0, 12, 12), MaxHeight = 380, BorderThickness = new Thickness(0) };
+        // 深色主题：ListBox/项深底浅字，选中/hover 深蓝高亮（默认白底会把白字淹掉）
+        var dark = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x24, 0x24, 0x36));
+        var hover = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2C, 0x3E, 0x58));
+        var sel = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2C, 0x3E, 0x58));
+        list.Background = dark;
+        var style = new System.Windows.Style(typeof(ListBoxItem));
+        style.Setters.Add(new System.Windows.Setter(ListBoxItem.ForegroundProperty, System.Windows.Media.Brushes.White));
+        style.Setters.Add(new System.Windows.Setter(ListBoxItem.BackgroundProperty, System.Windows.Media.Brushes.Transparent));
+        style.Setters.Add(new System.Windows.Setter(ListBoxItem.PaddingProperty, new Thickness(8, 5, 8, 5)));
+        style.Triggers.Add(new System.Windows.Trigger(ListBoxItem.IsMouseOverProperty, true)
+        {
+            Setters = { new System.Windows.Setter(ListBoxItem.BackgroundProperty, hover) },
+        });
+        style.Triggers.Add(new System.Windows.Trigger(ListBoxItem.IsSelectedProperty, true)
+        {
+            Setters = { new System.Windows.Setter(ListBoxItem.BackgroundProperty, sel) },
+        });
+        list.ItemContainerStyle = style;
         foreach (var it in items)
         {
-            var row = new ListBoxItem { Content = it, Foreground = System.Windows.Media.Brushes.White };
+            var row = new ListBoxItem { Content = it };
             row.MouseLeftButtonUp += (_, _) =>
             {
                 SysHiddenBox.Text = it;
