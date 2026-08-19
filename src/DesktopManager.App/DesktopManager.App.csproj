@@ -1,6 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <None Remove="Assets\tray32.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\tray.ico" />
+    <Resource Include="Assets\tray32.png" />
+    <Content Include="Assets\desktop-tool.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DesktopManager.Core\DesktopManager.Core.csproj" />
     <ProjectReference Include="..\DesktopManager.Native\DesktopManager.Native.csproj" />
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
@@ -13,10 +23,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageReference Include="Serilog" Version="4.3.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Resource Include="Assets\tray.ico" />
   </ItemGroup>
 
   <PropertyGroup>
