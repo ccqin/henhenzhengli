@@ -117,6 +117,7 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Hi
 
 ## 文档
 
+- **架构图与分层说明：**
 - 总计划与里程碑路线图：`docs/superpowers/plans/2026-07-21-desktop-manager.md`
 - M1 实现计划：`docs/superpowers/plans/2026-07-22-m1-desktop-takeover.md`
 - M2 实现计划：`docs/superpowers/plans/2026-07-22-m2-fences-hideicons.md`
