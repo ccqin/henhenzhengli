@@ -1180,7 +1180,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _iconDragArmed = true;
         _draggedIcon = icon; // R2：IconItem 数据引用，非 UI 容器
         _iconDragOrigin = e.GetPosition(this);
-        SelectLoose(icon); // M5-UI：单击选中高亮
+        // B2 修：按在多选集（≥2）上 → 保留多选（拖动将带全组）；否则按原有单选逻辑。
+        var pressed = SelectedIcons;
+        if (!(pressed.Count >= 2 && pressed.Any(i => i.FilePath == icon.FilePath)))
+            SelectLoose(icon); // M5-UI：单击选中高亮
     }
 
     /// <summary>M5-UI：单选高亮（先全局清除，再选中自己）。</summary>
