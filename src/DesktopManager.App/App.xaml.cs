@@ -268,8 +268,17 @@ public partial class App : Application
     {
         Log.Information("退出：托盘菜单点击");
         _tray?.Dispose();
-        Log.Information("退出：托盘已释放，开始 Shutdown");
+        // MSIX 真机踩坑：Shutdown() 后 Dispatcher 关闭被阻塞（OnExit 不执行，进程残留）。
+        // 兜底：3 秒后强杀自身——优雅退出是尽力而为，不能挡用户退出。
+        var killer = new System.Threading.Timer(_ =>
+        {
+            Log.Warning("退出：优雅关闭超时 3s，强制退出");
+            LogConfig.Shutdown();
+            Environment.Exit(0);
+        }, null, 3000, System.Threading.Timeout.Infinite);
+        Log.Information("退出：开始 Shutdown（3s 后兜底强退）");
         Shutdown();
+        // 若 Shutdown 正常走完会进 OnExit → 进程退出 → killer 自然失效。
     }
 
     protected override void OnExit(ExitEventArgs e)
