@@ -65,10 +65,17 @@ public sealed class MultiMonitorHost
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
 
+    // M5-T4 恢复（M6 IPC 版）：组内视频漂移校正——2s 轮询，首成员位置为基准，|Δ|>0.5s 对齐。
+    private System.Windows.Threading.DispatcherTimer? _videoSync;
+    private readonly Dictionary<string, double> _videoPos = new(StringComparer.Ordinal); // monitorId → 最新位置 ms
+
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
         _persistence = new Services.PersistenceService(store, BuildAggregatedConfig);
+        _videoSync = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _videoSync.Tick += (_, _) => SyncGroupVideos();
+        _videoSync.Start();
         // Z 看门狗已移除（2026-08-19）：owner=DefView 约束 + WM_MOUSEACTIVATE/MA_NOACTIVATE 双保险
         // 已根治浮高源；看门狗反而在交互（右键菜单等）期间误判重锚造成闪屏。
     }
@@ -235,8 +242,15 @@ public sealed class MultiMonitorHost
             var player = new ChildProcessManager(m.PersistentId);
             player.MessageReceived += msg => Application.Current?.Dispatcher.BeginInvoke(() =>
             {
-                if (msg is DesktopManager.Ipc.Error err)
-                    Log.Error("壁纸子进程[{Mon}]：{Msg}", m.PersistentId, err.Message);
+                switch (msg)
+                {
+                    case DesktopManager.Ipc.Error err:
+                        Log.Error("壁纸子进程[{Mon}]：{Msg}", m.PersistentId, err.Message);
+                        break;
+                    case VideoPositionReport vr:
+                        _videoPos[m.PersistentId] = vr.PositionMs; // 组内对齐用（SyncGroupVideos 消费）
+                        break;
+                }
             });
             player.Exited += code =>
             {
@@ -372,6 +386,27 @@ public sealed class MultiMonitorHost
         RequestSave();
         Services.LogDb.Audit("wallpaper", "remove", "", monitorId);
         Log.Information("壁纸已移除：{Mon}", monitorId);
+    }
+
+    /// <summary>组内视频对齐：有视频壁纸的组，以成员序首个为基准，其余 |Δ|&gt;0.5s → SetVideoPosition。</summary>
+    private void SyncGroupVideos()
+    {
+        foreach (var g in _displayGroups)
+        {
+            if (string.IsNullOrWhiteSpace(g.WallpaperPath) || g.WallpaperKind != WallpaperKind.Video) continue;
+            var members = g.MonitorIds.Where(_wallpaperPlayers.ContainsKey).ToList();
+            if (members.Count < 2) continue;
+            if (!_videoPos.TryGetValue(members[0], out var master)) continue; // 基准未上报（暂停/非播放）跳过
+            foreach (var mon in members.Skip(1))
+            {
+                if (!_videoPos.TryGetValue(mon, out var pos)) continue;
+                if (Math.Abs(pos - master) > 500)
+                {
+                    _wallpaperPlayers[mon].Send(new SetVideoPosition { PositionMs = master });
+                    Log.Information("视频同步校正：{Mon} 漂移={D:F1}s → 对齐基准", mon, Math.Abs(pos - master) / 1000);
+                }
+            }
+        }
     }
 
     /// <summary>Governor 暂停所有壁纸播放（IPC）。</summary>
@@ -651,6 +686,7 @@ public sealed class MultiMonitorHost
         _iconChildren.Clear();
         foreach (var p in _wallpaperPlayers.Values) p.Stop();
         _wallpaperPlayers.Clear();
+        _videoSync?.Stop();
     }
 
     // ---------- DTO 映射 ----------

@@ -35,6 +35,8 @@ public partial class App : Application
         // 关键：不能提前 Show——已显示的窗口被跨进程 SetParent 进 WorkerW 后 DWM 可能放弃
         // 合成（真机：窗口 vis=True 但纯黑）。EnsureHandle 只创建 hwnd 不显示，等主进程
         // SetParent 完成后发 Show 指令再显示。
+        _window.VideoPositionChanged += pos =>
+            IpcWriter.Write(Console.OpenStandardOutput(), new VideoPositionReport { PositionMs = pos });
         new System.Windows.Interop.WindowInteropHelper(_window).EnsureHandle();
     }
 
@@ -75,6 +77,7 @@ public partial class App : Application
                 case Pause: _window.Pause(); break;
                 case Resume: _window.Resume(); break;
                 case Show: _window.ShowLayer(); break;
+                case SetVideoPosition vp: _window.Seek(vp.PositionMs); break;
                 case DesktopManager.Ipc.Shutdown: Shutdown(0); break;
             }
         }

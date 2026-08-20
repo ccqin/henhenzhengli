@@ -40,6 +40,10 @@ public partial class WallpaperWindow : Window
         Visibility = Visibility.Collapsed
     };
 
+    /// <summary>视频位置上报（App 转 IPC，主进程组内对齐用）。</summary>
+    public event Action<double>? VideoPositionChanged;
+
+    private DispatcherTimer? _videoReportTimer;
     private GifBitmapDecoder? _gif;
     private DispatcherTimer? _gifTimer;
     private int _gifFrame;
@@ -128,6 +132,7 @@ public partial class WallpaperWindow : Window
                     _video.Source = new Uri(w.Path);
                     _video.Play();
                     _hasPlayback = true;
+                    StartVideoReport();
                     break;
                 case WallpaperKind.Gif:
                     if (!ApplyGif(w.Path)) ApplyImage(w.Path);
@@ -263,8 +268,26 @@ public partial class WallpaperWindow : Window
         _gifTimer?.Start();
     }
 
+    /// <summary>视频跳转（组内对齐）。</summary>
+    public void Seek(double positionMs)
+    {
+        try { _video.Position = TimeSpan.FromMilliseconds(positionMs); } catch { }
+    }
+
+    private void StartVideoReport()
+    {
+        _videoReportTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _videoReportTimer.Tick += (_, _) =>
+        {
+            if (_kind == WallpaperKind.Video && _hasPlayback && !_paused)
+                VideoPositionChanged?.Invoke(_video.Position.TotalMilliseconds);
+        };
+        _videoReportTimer.Start();
+    }
+
     private void StopPlayback()
     {
+        _videoReportTimer?.Stop();
         _gifTimer?.Stop();
         _gifTimer = null;
         _gif = null;

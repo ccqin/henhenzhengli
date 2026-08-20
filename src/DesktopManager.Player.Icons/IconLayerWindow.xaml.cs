@@ -254,6 +254,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             {
                 UseShellExecute = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
+                WorkingDirectory = Path.GetDirectoryName(filePath) ?? "",
             });
         }
         catch (Exception ex)
@@ -965,7 +966,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     {
         try
         {
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            // WorkingDirectory=文件所在目录：.lnk 的目标若用相对路径，进程 cwd 在 bin 下会解析失败
+            //（真机：Discord.lnk 打开报"找不到路径"）。
+            Process.Start(new ProcessStartInfo(path)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(path) ?? "",
+            });
             OpenReported?.Invoke(path, null);
         }
         catch (Exception ex)

@@ -31,6 +31,8 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ClearSelection), "clearSelection")]
 [JsonDerivedType(typeof(SetAppearance), "setAppearance")]
 [JsonDerivedType(typeof(SetMenu), "setMenu")]
+[JsonDerivedType(typeof(VideoPositionReport), "videoPositionReport")]
+[JsonDerivedType(typeof(SetVideoPosition), "setVideoPosition")]
 public abstract record IpcMessage
 {
     /// <summary>协议版本。</summary>
@@ -209,6 +211,18 @@ public sealed record ImportFence : IpcMessage
 
 /// <summary>清除本屏选中态（跨屏单选广播，发往除请求屏外的所有图标层）。</summary>
 public sealed record ClearSelection : IpcMessage;
+
+/// <summary>壁纸子进程播放位置上报（视频播放中每 2s；主进程做组内漂移校正）。</summary>
+public sealed record VideoPositionReport : IpcMessage
+{
+    public double PositionMs { get; init; }
+}
+
+/// <summary>视频跳转（组内对齐：|Δ|&gt;0.5s 时主进程下发）。</summary>
+public sealed record SetVideoPosition : IpcMessage
+{
+    public double PositionMs { get; init; }
+}
 
 /// <summary>外观设置下发：图标尺寸档（32/48/64）+ 标签风格（shadow/pill）。</summary>
 public sealed record SetAppearance : IpcMessage

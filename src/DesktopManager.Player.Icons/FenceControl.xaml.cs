@@ -326,7 +326,14 @@ public partial class FenceControl : UserControl
 
     private static void Open(string path)
     {
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+        try
+        {
+            Process.Start(new ProcessStartInfo(path)
+            {
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(path) ?? "", // .lnk 相对路径修复（同 IconLayerWindow.Open）
+            });
+        }
         catch { /* 与 IconLayerWindow.Open 同：失败静默（M1 遗留语义） */ }
     }
 
