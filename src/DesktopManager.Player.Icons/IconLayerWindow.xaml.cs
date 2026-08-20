@@ -931,6 +931,71 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         }
     }
 
+    // ---------- B1：拖到回收站删除 ----------
+
+    /// <summary>拖拽经过图标项：仅回收站（shell 虚拟对象）接受"删除"落点。</summary>
+    private void IconItem_DragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop) && IsRecycleBinItem(e.OriginalSource))
+            e.Effects = DragDropEffects.Move;
+        else
+            e.Effects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    /// <summary>落到回收站项：文件/文件夹删除进回收站（确认后执行；FSW 自动同步图标消失）。</summary>
+    private void IconItem_Drop(object sender, DragEventArgs e)
+    {
+        if (!IsRecycleBinItem(e.OriginalSource)) { e.Handled = true; return; }
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) { e.Handled = true; return; }
+        var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+        if (files is not { Length: > 0 }) { e.Handled = true; return; }
+
+        var names = string.Join("
+", files.Select(Path.GetFileName));
+        if (MessageBox.Show($"确定将以下 {files.Length} 个项目移到回收站？
+
+{names}",
+                "删除确认", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+        {
+            e.Handled = true;
+            return;
+        }
+        foreach (var f in files)
+        {
+            try
+            {
+                if (Directory.Exists(f))
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(f,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                else
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(f,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"删除失败：{Path.GetFileName(f)}
+{ex.Message}", "删除", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        e.Handled = true; // 阻止冒泡到画布 Drop（那会当"移动到桌面"处理）
+    }
+
+    /// <summary>视觉树回溯 DataContext：是否回收站虚拟项。</summary>
+    private static bool IsRecycleBinItem(object? source)
+    {
+        var el = source as DependencyObject;
+        while (el is not null)
+        {
+            if (el is FrameworkElement fe && fe.DataContext is IconItem item)
+                return item.FilePath.StartsWith("::{645FF040", StringComparison.Ordinal);
+            el = VisualTreeHelper.GetParent(el);
+        }
+        return false;
+    }
+
     // ---------- T4：双击画布空白切可见性 ----------
 
     private void IconCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

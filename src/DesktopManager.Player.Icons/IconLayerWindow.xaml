@@ -52,6 +52,8 @@
                     <Border CornerRadius="6"
                             Padding="4,2"
                             Width="{Binding LabelWidth, RelativeSource={RelativeSource AncestorType=Window}}"
+                            AllowDrop="True"
+                            DragOver="IconItem_DragOver" Drop="IconItem_Drop"
                             Visibility="{Binding IconVisibility, RelativeSource={RelativeSource AncestorType=Window}}">
                         <Border.Style>
                             <Style TargetType="Border">
