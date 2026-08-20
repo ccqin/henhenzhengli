@@ -578,7 +578,7 @@ public sealed class MultiMonitorHost
     // hint 字典构建时已只含在线归属（TopologyRebuild），无需再查在线性。
     private List<IconDto> SplitFor(string monitorId, IEnumerable<IconItem> all) =>
         IconRouter.SplitFor(monitorId, all, FindOwnerMonitor, _looseAssignHint, PrimaryMonitorId, _orphanPaths)
-            .Select(ToDto).ToList();
+            .Select(ToDtoWithPos).ToList();
 
     /// <summary>增量分发（sync.Changed）。Removed 广播所有子进程（各自 reconcile no-op 防归属竞态）；
     /// Added 路由到归属屏（缓存归属 → hint → 主屏）。孤儿 path 跳过。</summary>
@@ -607,7 +607,7 @@ public sealed class MultiMonitorHost
             owner ??= PrimaryMonitorId;
             if (owner is null) continue;
             if (!byMonitor.TryGetValue(owner, out var list)) byMonitor[owner] = list = new List<IconDto>();
-            list.Add(ToDto(item));
+            list.Add(ToDtoWithPos(item));
         }
         foreach (var (mon, items) in byMonitor)
         {
@@ -657,6 +657,20 @@ public sealed class MultiMonitorHost
 
     private static IconDto ToDto(IconItem i) =>
         new() { Path = i.FilePath, Name = i.DisplayName, X = i.X, Y = i.Y };
+
+    /// <summary>带持久化位置的 DTO（M6 修复：位置下发通道）——config 位置是重启保持的真相源，
+    /// 子进程收到 X/Y&gt;0 的项会原位显示（AddLooseIcon 保留坐标），否则网格排位。</summary>
+    private IconDto ToDtoWithPos(IconItem i)
+    {
+        foreach (var c in _iconChildren.Values)
+        {
+            var hit = c.Positions.FirstOrDefault(p =>
+                string.Equals(p.FilePath, i.FilePath, StringComparison.OrdinalIgnoreCase));
+            if (hit is not null)
+                return new IconDto { Path = i.FilePath, Name = i.DisplayName, X = hit.X, Y = hit.Y };
+        }
+        return ToDto(i); // 无记录（新文件）→ X/Y=0 → 子进程网格排位
+    }
 
     internal static FenceDto ToDto(FenceConfig f) => new()
     {
