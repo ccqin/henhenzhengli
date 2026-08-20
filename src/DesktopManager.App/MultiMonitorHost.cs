@@ -109,6 +109,12 @@ public sealed class MultiMonitorHost
         _displayGroups = config.DisplayGroups.ToList();
         _appearance = config.Appearance;
         _menu = config.Menu;
+        // B3：开机自启（注册表与 config 对账，config 为真相源）
+        if (config.AutoStart != DesktopManager.Native.AutoStart.IsEnabled())
+        {
+            try { DesktopManager.Native.AutoStart.SetEnabled(config.AutoStart); }
+            catch (Exception ex) { Log.Warning(ex, "自启注册表设置失败"); }
+        }
         var online = monitors.Select(m => new MonitorRef(m.PersistentId, m.IsPrimary)).ToList();
         var fenceAssign = MonitorAssignment.FenceAssignments(config.Fences, online);
         var looseAssign = MonitorAssignment.LooseAssignments(config.IconPositions, online);
@@ -466,6 +472,16 @@ public sealed class MultiMonitorHost
 
     public MenuConfig Menu => _menu;
 
+    /// <summary>B3：开机自启切换（注册表 + config）。</summary>
+    public void SetAutoStart(bool enabled)
+    {
+        DesktopManager.Native.AutoStart.SetEnabled(enabled);
+        Services.LogDb.Audit("settings", "autostart", enabled ? "开启" : "关闭");
+        RequestSave();
+    }
+
+    public bool AutoStartEnabled => DesktopManager.Native.AutoStart.IsEnabled();
+
     /// <summary>M5：设置窗口 commit：替换显示组 + 全部在线屏重渲染（组优先）+ 防抖落盘。</summary>
     public void SetDisplayGroups(IReadOnlyList<DisplayGroup> groups)
     {
@@ -673,6 +689,7 @@ public sealed class MultiMonitorHost
             DisplayGroups = _displayGroups.ToList(),
             Appearance = _appearance,
             Menu = _menu,
+            AutoStart = DesktopManager.Native.AutoStart.IsEnabled(),
         };
     }
 

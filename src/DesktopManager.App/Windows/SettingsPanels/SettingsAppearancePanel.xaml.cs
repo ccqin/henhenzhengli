@@ -14,10 +14,17 @@ public partial class SettingsAppearancePanel : UserControl
 
     private bool _suppress;
 
+    private void AutoStart_Changed(object sender, RoutedEventArgs e)
+    {
+        if (Host is null || _suppress) return;
+        Host.SetAutoStart(AutoStartBox.IsChecked == true);
+    }
+
     public void LoadAppearanceUI()
     {
         if (Host is null || _suppress) return;
         _suppress = true;
+        AutoStartBox.IsChecked = Host.AutoStartEnabled;
         var a = Host.Appearance;
         foreach (var rb in new[] { IconSizeS, IconSizeM, IconSizeL })
             rb.IsChecked = rb.Tag.ToString() == a.IconSize.ToString();
