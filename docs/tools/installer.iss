@@ -3,7 +3,7 @@
 ;       2) ISCC.exe docs\tools\installer.iss（需 Inno Setup 6+，中文语言包 InnoSetup\Languages\ChineseSimplified.isl）
 ; 产物：artifacts\DesktopManager_Setup.exe
 
-#define AppName "DesktopManager 桌面整理"
+#define AppName "狠狠整理"
 #define AppVersion "1.0.0"
 #define AppPublisher "DesktopManager Dev"
 #define AppExeName "DesktopManager.App.exe"
@@ -17,7 +17,7 @@ DefaultDirName={autopf}\DesktopManager
 DefaultGroupName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 OutputDir=..\..\artifacts
-OutputBaseFilename=DesktopManager_Setup
+OutputBaseFilename=HenHenZhengLi_Setup
 SetupIconFile=..\..\src\DesktopManager.App\Assets\desktop-tool.ico
 Compression=lzma2/max
 SolidCompression=yes

@@ -266,7 +266,9 @@ public partial class App : Application
 
     private void OnExit_Clicked(object sender, RoutedEventArgs e)
     {
+        Log.Information("退出：托盘菜单点击");
         _tray?.Dispose();
+        Log.Information("退出：托盘已释放，开始 Shutdown");
         Shutdown();
     }
 
@@ -275,13 +277,13 @@ public partial class App : Application
         // M3-T4：立即聚合保存所有窗口布局（不等防抖），确保退出时 Fences/归属/折叠态/散落位置落盘。
         // 放 _sync.Dispose / RestoreExplorer 之前：保存是 app 职责的核心数据，优先级最高。
         // 保存失败不阻塞后续恢复流程（SaveAllNow 内部 try/catch）。
-        try { _host?.SaveAllNow(); }
+        try { _host?.SaveAllNow(); Log.Information("退出①：SaveAllNow 完成"); }
         catch (System.Exception ex) { Log.Error(ex, "OnExit SaveAllNow 失败"); }
 
         _sync?.Dispose();
         _displayWatcher?.Dispose();
         _governor?.Dispose();
-        _host?.CloseAll(); // 关所有图标层窗口（恢复原生桌面前）
+        _host?.CloseAll(); Log.Information("退出④：CloseAll 完成"); // 关所有图标层窗口（恢复原生桌面前）
         // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
         // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。
         try

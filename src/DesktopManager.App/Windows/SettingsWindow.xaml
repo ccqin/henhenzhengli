@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:panels="clr-namespace:DesktopManager.App.Windows.SettingsPanels"
-        Title="DesktopManager 设置" ShowInTaskbar="True" Width="980" Height="700"
+        Title="狠狠整理 设置" ShowInTaskbar="True" Width="980" Height="700"
         WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterScreen"
         Background="#1B1B26" Foreground="#E8E8F0">
     <!-- M5-UI（A+C 美化）：自定义标题栏 + 左导航右内容 + 卡片分区 + 隐式控件样式 + 预览缩略图。零依赖。 -->

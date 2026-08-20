@@ -13,8 +13,8 @@
             Publisher="CN=DesktopManager Dev" />
 
   <Properties>
-    <DisplayName>DesktopManager 桌面整理</DisplayName>
-    <PublisherDisplayName>DesktopManager Dev</PublisherDisplayName>
+    <DisplayName>狠狠整理</DisplayName>
+    <PublisherDisplayName>狠狠整理</PublisherDisplayName>
     <Logo>Assets\store-logo.png</Logo>
   </Properties>
 
@@ -37,8 +37,8 @@
                  Executable="DesktopManager.App.exe"
                  EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-          DisplayName="DesktopManager 桌面整理"
-          Description="桌面图标管理 + 动态壁纸：收纳盒分组、跨屏壁纸、视频壁纸"
+          DisplayName="狠狠整理"
+          Description="桌面图标收纳 + 动态壁纸：收纳盒分组、跨屏壁纸、视频壁纸、日志排障"
           BackgroundColor="#1B1B26"
           Square44x44Logo="Assets\icon44.png"
           Square150x150Logo="Assets\icon150.png" />
@@ -47,7 +47,7 @@
         <desktop:Extension Category="windows.startupTask">
           <desktop:StartupTask TaskId="DesktopManagerStart"
                                Enabled="true"
-                               DisplayName="DesktopManager 桌面整理" />
+                               DisplayName="狠狠整理" />
         </desktop:Extension>
       </Extensions>
     </Application>
