@@ -355,6 +355,14 @@ public partial class FenceControl : UserControl
     {
         // 非 Text（外部文件 FileDrop）不 Handled → 冒泡到 IconCanvas_Drop（移到桌面散落区，不加入本 Fence）。
         if (!e.Data.GetDataPresent(DataFormats.Text)) return;
+        // B2 多选批量入盒：DMSelection 标记 → FileDrop 数组逐个 Add（无标记时单 path，兼容旧协议）。
+        if (e.Data.GetDataPresent("DMSelection") &&
+            e.Data.GetData(DataFormats.FileDrop) is string[] multi)
+        {
+            foreach (var mp in multi) AddIcon(mp);
+            e.Handled = true;
+            return;
+        }
         var path = (string)e.Data.GetData(DataFormats.Text);
         AddIcon(path); // 去重 + 渲染 + 触发 IconAdded（宿主据此更新散落区）
         e.Handled = true; // 阻止冒泡到 IconCanvas，否则宿主会误当「拖出到空白」处理

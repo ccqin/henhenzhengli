@@ -198,8 +198,14 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         }
         if (Menu.ShowDelete && !isShell)
         {
-            var mi = new MenuItem { Header = "删除" };
-            mi.Click += (_, _) => DeleteIcon(path);
+            var selection = SelectedIcons;
+            bool batch = selection.Count >= 2 && selection.Any(i => i.FilePath == path);
+            var mi = new MenuItem { Header = batch ? $"删除（{selection.Count} 个项目）" : "删除" };
+            mi.Click += (_, _) =>
+            {
+                if (batch) BatchDelete(selection.Select(i => i.FilePath).ToList());
+                else DeleteIcon(path);
+            };
             menu.Items.Add(mi);
         }
         if (Menu.ShowLocate && !isShell)
@@ -339,6 +345,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
         // T6：画布空白右键 → 新建收纳盒。
         IconCanvas.ContextMenu = BuildCanvasContextMenu();
+
+        // B2：框选（Preview 隧道：先于图标/空白自身的处理）。
+        IconCanvas.PreviewMouseLeftButtonDown += Canvas_PreviewMouseLeftButtonDown;
+        IconCanvas.PreviewMouseMove += Canvas_PreviewMouseMove;
+        IconCanvas.PreviewMouseLeftButtonUp += Canvas_PreviewMouseLeftButtonUp;
     }
 
     /// <summary>M3 加载：逐个 CreateFence + LoadIcons + _fencedPaths 初始化。
@@ -834,6 +845,30 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         //   "从 Fence 移除归属回散落区"，文件本身已在桌面不应移动 → 走 Text 分支，不触发 FileDrop 移动）。
         // 否则 FileDrop present → 外部文件移到桌面（explorer/文件夹拖入，仅 FileDrop 无 Text）。
         // 两者都 present 必为 app 图标（见 Loose_PreviewMouseMove / FenceControl MouseMove 构造的 DataObject）。
+        // B2 多选拖动摆放：以 Drop 点为起点网格展开（区别于外部文件移入）。
+        if (e.Data.GetDataPresent("DMSelection") &&
+            e.Data.GetData(DataFormats.FileDrop) is string[] selPaths)
+        {
+            var pos0 = e.GetPosition(LooseItemsControl);
+            double stepX = IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120;
+            double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
+            int col = 0, row = 0;
+            foreach (var sp in selPaths)
+            {
+                var it = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, sp, StringComparison.OrdinalIgnoreCase));
+                if (it is not null)
+                {
+                    it.X = pos0.X + col * stepX;
+                    it.Y = pos0.Y + row * stepY;
+                    _iconPositions[sp] = (it.X, it.Y);
+                }
+                if (++col >= 10) { col = 0; row++; }
+            }
+            RequestSave();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Data.GetDataPresent(DataFormats.Text))
         {
             var path = (string)e.Data.GetData(DataFormats.Text);
@@ -930,6 +965,78 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             }
         }
     }
+
+    // ---------- B2：框选多选 ----------
+    // 空白按下并拖动超阈值 → 半透明选择矩形 → 松开结算（相交的散落图标多选；替换式选择）。
+    private System.Windows.Shapes.Rectangle? _marquee;
+    private Point? _marqueeOrigin;
+    private bool _marqueeDragging;
+
+    private void EnsureMarquee()
+    {
+        if (_marquee is not null) return;
+        _marquee = new System.Windows.Shapes.Rectangle
+        {
+            Stroke = new SolidColorBrush(Color.FromArgb(0x80, 0x66, 0xCC, 0xFF)),
+            Fill = new SolidColorBrush(Color.FromArgb(0x22, 0x66, 0xCC, 0xFF)),
+            StrokeThickness = 1,
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        IconCanvas.Children.Add(_marquee);
+    }
+
+    /// <summary>空白按下：记录框选起点（单击/双击语义保留在 MouseLeftButtonDown/双击分支）。</summary>
+    private void Canvas_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, IconCanvas)) return; // 仅空白起点
+        if (e.ClickCount >= 2) return;                              // 双击交给显隐分支
+        _marqueeOrigin = e.GetPosition(IconCanvas);
+        _marqueeDragging = false;
+    }
+
+    private void Canvas_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_marqueeOrigin is not { } origin || e.LeftButton != MouseButtonState.Pressed) return;
+        var pos = e.GetPosition(IconCanvas);
+        if (!_marqueeDragging &&
+            (Math.Abs(pos.X - origin.X) < SystemParameters.MinimumHorizontalDragDistance ||
+             Math.Abs(pos.Y - origin.Y) < SystemParameters.MinimumVerticalDragDistance)) return;
+        _marqueeDragging = true;
+        EnsureMarquee();
+        _marquee!.Visibility = Visibility.Visible;
+        var x = Math.Min(origin.X, pos.X); var y = Math.Min(origin.Y, pos.Y);
+        var w = Math.Abs(pos.X - origin.X); var h = Math.Abs(pos.Y - origin.Y);
+        Canvas.SetLeft(_marquee, x); Canvas.SetTop(_marquee, y);
+        _marquee.Width = w; _marquee.Height = h;
+        e.Handled = true;
+    }
+
+    /// <summary>框选结算：矩形与散落图标 cell 相交 → 多选（替换式）；单击（未拖动）→ 清选中（原有语义）。</summary>
+    private void Canvas_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_marqueeOrigin is not { } origin) return;
+        if (_marqueeDragging && _marquee is not null)
+        {
+            var pos = e.GetPosition(IconCanvas);
+            var sel = new Rect(
+                Math.Min(origin.X, pos.X), Math.Min(origin.Y, pos.Y),
+                Math.Abs(pos.X - origin.X), Math.Abs(pos.Y - origin.Y));
+            _marquee.Visibility = Visibility.Collapsed;
+            double cw = LabelWidth, ch = IconSize + 44; // cell 尺寸估算（图标+标签）
+            foreach (var i in _looseIcons)
+                i.IsSelected = sel.IntersectsWith(new Rect(i.X, i.Y, cw, ch));
+        }
+        else
+        {
+            ClearLocalSelection(); // 空白单击：清选中（保持原语义）
+        }
+        _marqueeOrigin = null;
+        _marqueeDragging = false;
+    }
+
+    /// <summary>当前多选集（拖动/批量操作用）。</summary>
+    private List<IconItem> SelectedIcons => _looseIcons.Where(i => i.IsSelected).ToList();
 
     // ---------- B1：拖到回收站删除 ----------
 
@@ -1130,12 +1237,16 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             var path = _draggedIcon.FilePath; // capture（拖拽期间 _draggedIcon 可能被清）
             _iconDragArmed = false;
             _draggedIcon = null;
+            // B2 多选拖动：被拖项在选中集（≥2）→ FileDrop 带全部选中项 + DMSelection 标记
+            var selection = SelectedIcons;
+            bool multi = selection.Count >= 2 && selection.Any(i => i.FilePath == path);
             // M2 真机修复：DataObject 同时含 FileDrop（explorer/文件夹认这个 + 系统拖拽视觉反馈）
             // + Text（兼容 Fence_Drop / IconCanvas_Drop 按 Text 读 app 图标归属）。
             // 单纯 Text 格式 explorer 不认 → 拖到文件夹无反应且无拖拽图标反馈。
             var data = new DataObject();
-            data.SetData(DataFormats.FileDrop, new[] { path });
+            data.SetData(DataFormats.FileDrop, multi ? selection.Select(i => i.FilePath).ToArray() : new[] { path });
             data.SetData(DataFormats.Text, path);
+            if (multi) data.SetData("DMSelection", true); // 内部多选拖动标记（目标端区分外部文件拖入）
             // 拖源用 LooseItemsControl（根 ItemsControl，稳定不回收）。
             DragDrop.DoDragDrop(LooseItemsControl, data, DragDropEffects.Move);
         }
@@ -1147,6 +1258,32 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _contextMenuIcon = FindIconFromSource(e.OriginalSource);
     }
 
+
+    /// <summary>B2 批量删除（确认 → 回收站；目录/文件分流）。</summary>
+    private void BatchDelete(List<string> paths)
+    {
+        var names = string.Join(Environment.NewLine, paths.Select(Path.GetFileName));
+        if (MessageBox.Show($"确定将以下 {paths.Count} 个项目移到回收站？\n\n{names}",
+                "批量删除", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        foreach (var f in paths)
+        {
+            try
+            {
+                if (Directory.Exists(f))
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(f,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                else
+                    Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(f,
+                        Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                        Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("批量删除失败: " + f + " " + ex.Message);
+            }
+        }
+    }
 
     /// <summary>重命名：自定义对话框（预填完整文件名）→ ResolveRenamePath 校验 → File.Move。
     /// 成功后 DesktopSync 的 FSW 自动检测 Renamed → Changed → ApplyDiff 增量重渲，UI 自动同步（旧名消失、新名出现）。</summary>
