@@ -1009,6 +1009,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var w = Math.Abs(pos.X - origin.X); var h = Math.Abs(pos.Y - origin.Y);
         Canvas.SetLeft(_marquee, x); Canvas.SetTop(_marquee, y);
         _marquee.Width = w; _marquee.Height = h;
+        // 实时预览：拖动中相交的图标立即高亮（原生桌面同款体验；松手结算为最终态）。
+        var live = new Rect(x, y, w, h);
+        double cw = LabelWidth, ch = IconSize + 44;
+        foreach (var i in _looseIcons)
+            i.IsSelected = live.IntersectsWith(new Rect(i.X, i.Y, cw, ch));
         e.Handled = true;
     }
 
