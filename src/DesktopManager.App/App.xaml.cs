@@ -268,46 +268,51 @@ public partial class App : Application
     {
         Log.Information("退出：托盘菜单点击");
         _tray?.Dispose();
-        // MSIX 真机踩坑：Shutdown() 后 Dispatcher 关闭被阻塞（OnExit 不执行，进程残留）。
-        // 兜底：3 秒后强杀自身——优雅退出是尽力而为，不能挡用户退出。
-        var killer = new System.Threading.Timer(_ =>
-        {
-            Log.Warning("退出：优雅关闭超时 3s，强制退出");
-            LogConfig.Shutdown();
-            Environment.Exit(0);
-        }, null, 3000, System.Threading.Timeout.Infinite);
-        Log.Information("退出：开始 Shutdown（3s 后兜底强退）");
+
+        // MSIX 真机结论（2026-08-20 搜索证实）：Shutdown() 后 Dispatcher 关闭可能被阻塞，
+        // OnExit 不保证执行 → 所有清理必须在 Shutdown() 之前同步完成。
+        // 参考：react-native-windows#1470 / CefSharp#990 等打包应用同款问题。
+        PerformExitCleanup();
+
         Shutdown();
-        // 若 Shutdown 正常走完会进 OnExit → 进程退出 → killer 自然失效。
+
+        // 2s 兜底（清理已完成，这里只是杀掉可能的 Dispatcher 挂死空壳）
+        var killer = new System.Threading.Timer(_ => Environment.Exit(0), null, 2000, System.Threading.Timeout.Infinite);
     }
 
-    protected override void OnExit(ExitEventArgs e)
+    /// <summary>退出清理（保存→停子进程→恢复原生桌面→释放资源）。在 Shutdown() 之前调用。</summary>
+    private void PerformExitCleanup()
     {
-        // M3-T4：立即聚合保存所有窗口布局（不等防抖），确保退出时 Fences/归属/折叠态/散落位置落盘。
-        // 放 _sync.Dispose / RestoreExplorer 之前：保存是 app 职责的核心数据，优先级最高。
-        // 保存失败不阻塞后续恢复流程（SaveAllNow 内部 try/catch）。
         try { _host?.SaveAllNow(); Log.Information("退出①：SaveAllNow 完成"); }
-        catch (System.Exception ex) { Log.Error(ex, "OnExit SaveAllNow 失败"); }
+        catch (System.Exception ex) { Log.Error(ex, "退出 SaveAllNow 失败"); }
 
         _sync?.Dispose();
         _displayWatcher?.Dispose();
         _governor?.Dispose();
-        _host?.CloseAll(); Log.Information("退出④：CloseAll 完成"); // 关所有图标层窗口（恢复原生桌面前）
-        // I-3 时序：RestoreExplorer 成功（HideIcons 已 0）后才 ClearSelfCleanup。
-        // 若 RestoreExplorer 失败（HideIcons 可能仍 1）→ 保留 RunOnce 兜底，让下次登录 app --restore-icons 模式广播恢复，避免桌面永久空。
+        _host?.CloseAll(); Log.Information("退出④：CloseAll 完成");
         try
         {
-            _recoveryGuard?.RestoreExplorer(); // 正常退出恢复 explorer 原生桌面图标
-            _recoveryGuard?.ClearSelfCleanup(); // 清 RunOnce 钩子（正常退出无需下次登录兜底）
+            _recoveryGuard?.RestoreExplorer();
+            _recoveryGuard?.ClearSelfCleanup();
+            Log.Information("退出⑤：原生桌面已恢复");
         }
         catch (System.Exception ex)
         {
-            // 可恢复的降级路径：桌面图标恢复失败时保留 RunOnce 兜底（下次登录自动修复）→ Warning。
-            Log.Warning(ex, "OnExit RestoreExplorer/ClearSelfCleanup 失败，保留 RunOnce 兜底");
+            Log.Warning(ex, "退出 RestoreExplorer 失败，RunOnce 兜底保留");
         }
+        _singleInstanceMutex?.Dispose();
+        LogConfig.Shutdown();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        // 主体清理已在 PerformExitCleanup()（Shutdown 前同步完成，MSIX 安全）。
+        // 这里是幂等兜底（各组件 Dispose 已做 no-op 保护）+ 防止 PerformExitCleanup 未跑的路径。
+        try { _host?.SaveAllNow(); } catch { /* 幂等 */ }
+        _host?.CloseAll();
+        try { _recoveryGuard?.RestoreExplorer(); _recoveryGuard?.ClearSelfCleanup(); } catch { /* 幂等 */ }
         _tray?.Dispose();
         _singleInstanceMutex?.Dispose();
-        LogConfig.Shutdown(); // P1：base.OnExit 之前 flush 日志
         base.OnExit(e);
     }
 }
