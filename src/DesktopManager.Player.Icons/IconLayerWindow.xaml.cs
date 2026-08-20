@@ -951,11 +951,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
         if (files is not { Length: > 0 }) { e.Handled = true; return; }
 
-        var names = string.Join("
-", files.Select(Path.GetFileName));
-        if (MessageBox.Show($"确定将以下 {files.Length} 个项目移到回收站？
-
-{names}",
+        var names = string.Join(Environment.NewLine, files.Select(Path.GetFileName));
+        if (MessageBox.Show($"确定将以下 {files.Length} 个项目移到回收站？\n\n{names}",
                 "删除确认", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
         {
             e.Handled = true;
@@ -976,8 +973,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"删除失败：{Path.GetFileName(f)}
-{ex.Message}", "删除", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"删除失败：{Path.GetFileName(f)}\n{ex.Message}", "删除", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
         e.Handled = true; // 阻止冒泡到画布 Drop（那会当"移动到桌面"处理）
