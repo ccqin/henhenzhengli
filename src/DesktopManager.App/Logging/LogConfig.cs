@@ -14,7 +14,11 @@ public static class LogConfig
     {
         // AppContext.BaseDirectory 在所有启动场景（含 --restore-icons 单实例、AOT 友好）都可用，
         // 比 AppDomain.CurrentDomain.BaseDirectory 在某些 trim 场景更稳。
-        string logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+        // C1(M7)：日志迁 %AppData%\DesktopManager\logs（与 config/logs.db 同数据区）——
+        // MSIX 安装目录（WindowsApps）只读，写 exe 目录会崩；桌面版同理统一。
+        string logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "DesktopManager", "logs");
         if (!Directory.Exists(logDir))
             Directory.CreateDirectory(logDir);
 
