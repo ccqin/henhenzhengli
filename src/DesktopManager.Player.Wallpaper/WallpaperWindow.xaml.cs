@@ -279,8 +279,9 @@ public partial class WallpaperWindow : Window
             if (!_videoCache.TryGetValue(originalPath, out var cached) || !File.Exists(cached))
             {
                 var srcTime = File.GetLastWriteTimeUtc(originalPath);
+                // 保留原扩展名（MediaElement 按后缀识别媒体格式，.cache 无法播放）
                 cached = Path.Combine(Path.GetTempPath(),
-                    "DM_video_" + Math.Abs(originalPath.GetHashCode()) + ".cache");
+                    "DM_video_" + Math.Abs(originalPath.GetHashCode()) + Path.GetExtension(originalPath));
                 var needCopy = !File.Exists(cached) ||
                                File.GetLastWriteTimeUtc(cached) != srcTime;
                 if (needCopy)
