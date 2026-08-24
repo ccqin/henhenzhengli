@@ -129,7 +129,7 @@ public partial class WallpaperWindow : Window
                     _natW = _natH = 0;
                     _image.Visibility = Visibility.Collapsed;
                     _video.Visibility = Visibility.Visible;
-                    _video.Source = new Uri(w.Path);
+                    _video.Source = new Uri(GetVideoCachedPath(w.Path));
                     _video.Play();
                     _hasPlayback = true;
                     StartVideoReport();
@@ -266,6 +266,38 @@ public partial class WallpaperWindow : Window
         _paused = false;
         try { _video.Play(); } catch { }
         _gifTimer?.Start();
+    }
+
+    /// <summary>视频内存缓存路径：首次播放复制到 %TEMP%（FILE_ATTRIBUTE_TEMPORARY → OS 文件缓存
+    /// 优先进 RAM，循环播放不再逐块读原文件——解决频繁磁盘 I/O）。原文件变更时重拷（LastWriteTime 比对）。</summary>
+    private static readonly Dictionary<string, string> _videoCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string GetVideoCachedPath(string originalPath)
+    {
+        try
+        {
+            if (!_videoCache.TryGetValue(originalPath, out var cached) || !File.Exists(cached))
+            {
+                var srcTime = File.GetLastWriteTimeUtc(originalPath);
+                cached = Path.Combine(Path.GetTempPath(),
+                    "DM_video_" + Math.Abs(originalPath.GetHashCode()) + ".cache");
+                var needCopy = !File.Exists(cached) ||
+                               File.GetLastWriteTimeUtc(cached) != srcTime;
+                if (needCopy)
+                {
+                    File.Copy(originalPath, cached, overwrite: true);
+                    // TEMPORARY：提示 OS 数据是临时的，尽量驻留内存（lazy write）
+                    File.SetAttributes(cached, File.GetAttributes(cached) | FileAttributes.Temporary);
+                    File.SetLastWriteTimeUtc(cached, srcTime);
+                }
+                _videoCache[originalPath] = cached;
+            }
+            return cached;
+        }
+        catch
+        {
+            return originalPath; // 复制失败退回原路径（正常流式播放）
+        }
     }
 
     /// <summary>视频跳转（组内对齐）。</summary>
