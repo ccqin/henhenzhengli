@@ -16,4 +16,8 @@
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+  </ItemGroup>
+
 </Project>
