@@ -16,8 +16,22 @@
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
   </ItemGroup>
 
+  <!-- LibVLC 原生布局（包的 VideoLAN.LibVLC.Windows.targets 可配置）：
+       默认 AnyCPU 会把 x64/x86/arm64 三架构复制到 libvlc\ 子目录（~300MB，LibVLCSharp 探测不到）。
+       → 仅留 x64、直接落应用根（LibVLC 默认探测路径），并裁掉 lua/hrtfs（直放媒体文件用不到，
+         no-audio 场景 hrtfs 无意义）。%2A 是转义的 *，由 targets Unescape 后展开通配。 -->
+  <PropertyGroup>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+    <VlcWindowsX64TargetDir>.</VlcWindowsX64TargetDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <VlcWindowsX64IncludeFiles Include="libvlc.%2A;libvlccore.%2A;plugins\%2A%2A" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
   </ItemGroup>
 
 </Project>

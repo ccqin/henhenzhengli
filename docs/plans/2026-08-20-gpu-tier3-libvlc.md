@@ -3,6 +3,22 @@
 > 目标：视频壁纸 GPU 从 ~18% 降到 3-5%（跳过 WPF 合成器，DirectX 直渲染）
 > 前置：第一二梯队已落地（`28e6c15`/`c09fb16`）；LibVLCSharp NuGet 已添加但代码未写
 
+## 实施结果（2026-08-25 落地）
+
+- ✅ T1/T2/T3 全部完成，IPC 协议不变（App.xaml.cs 与主进程零改动——现有架构把 IPC 全转发到
+  WallpaperWindow 公共方法，方法签名未变）
+- **跨屏裁剪实际方案**：弃用 `Crop` 几何字符串（格式不可靠），改为 **WS_CHILD 子 HWND**——
+  在壁纸窗口内创建子窗口作 LibVLC 渲染表面，按旧 MediaElement 的 Canvas 布局 1:1 负偏移放置，
+  超出父客户区被 Win32 天然裁剪；父窗口加 WS_CLIPCHILDREN 防闪
+- **包坑**：`VideoLAN.LibVLC.Windows` 3.0.22+ 布局改为 `build/{x64,x86,arm64}/` + MSBuild targets，
+  默认 AnyCPU 三架构复制 ~300MB 到 `libvlc\` 子目录（LibVLC 探测不到）→ csproj 用包属性
+  `VlcWindowsX*Enabled=false` / `VlcWindowsX64TargetDir=.` 仅 x64 落应用根（~90MB），裁掉 lua/hrtfs
+- **API 坑**：LibVLCSharp 3.10.1 命名空间是 `LibVLCSharp.Shared`（非官方文档的 `LibVLCSharp`）；
+  `MediaPlayer.Size(uint, ref uint, ref uint)` 是 ref 签名；`Core.Initialize(null)` 须在 new LibVLC 前调
+- **Win32 坑**：`GetModuleHandleW` 在 kernel32 非 user32
+- 冒烟测试（真机）：D3D11VA 硬解（Intel UHD 770）、positionMs 上报/暂停/恢复/Seek/循环、
+  3840x1080 超屏检测全通过；GPU 占用对比需任务管理器观察（预期 ~18% → 3-5%）
+
 ## 背景
 
 **为什么 20% GPU 降不下来**：当前视频路径是 `解码器 → WPF 合成器 → DWM`，
