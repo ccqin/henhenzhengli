@@ -37,7 +37,8 @@ public partial class WallpaperWindow : Window
         Volume = 0,
         IsHitTestVisible = false,
         Stretch = Stretch.Fill,
-        Visibility = Visibility.Collapsed
+        Visibility = Visibility.Collapsed,
+        ScrubbingEnabled = false, // GPU 优化③：暂停/跳转不渲染帧
     };
 
     /// <summary>视频位置上报（App 转 IPC，主进程组内对齐用）。</summary>
@@ -127,6 +128,7 @@ public partial class WallpaperWindow : Window
             {
                 case WallpaperKind.Video:
                     _natW = _natH = 0;
+                    _gifTimer?.Stop(); // GPU 优化②：视频播放时停 GIF 定时器（防空转）
                     _image.Visibility = Visibility.Collapsed;
                     _video.Visibility = Visibility.Visible;
                     _video.Source = new Uri(GetVideoCachedPath(w.Path));

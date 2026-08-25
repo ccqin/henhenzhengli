@@ -13,6 +13,12 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // GPU 优化①：WPF 渲染循环 60→30fps（壁纸 30fps 视觉足够，减 3-5% GPU）。
+        // 必须在任何 Timeline/动画创建之前设置。
+        System.Windows.Media.Animation.Timeline.DesiredFrameRateProperty.OverrideMetadata(
+            typeof(System.Windows.Media.Animation.Timeline),
+            new System.Windows.FrameworkPropertyMetadata { DefaultValue = 30 });
+
         // 可选软渲染（诊断开关）：默认硬件渲染（M5 顶层形态验证过）。
         if (Environment.GetEnvironmentVariable("DESKTOPMGR_SWRENDER") == "1")
             System.Windows.Media.RenderOptions.ProcessRenderMode =
