@@ -15,9 +15,18 @@
   `VlcWindowsX*Enabled=false` / `VlcWindowsX64TargetDir=.` 仅 x64 落应用根（~90MB），裁掉 lua/hrtfs
 - **API 坑**：LibVLCSharp 3.10.1 命名空间是 `LibVLCSharp.Shared`（非官方文档的 `LibVLCSharp`）；
   `MediaPlayer.Size(uint, ref uint, ref uint)` 是 ref 签名；`Core.Initialize(null)` 须在 new LibVLC 前调
-- **Win32 坑**：`GetModuleHandleW` 在 kernel32 非 user32
-- 冒烟测试（真机）：D3D11VA 硬解（Intel UHD 770）、positionMs 上报/暂停/恢复/Seek/循环、
-  3840x1080 超屏检测全通过；GPU 占用对比需任务管理器观察（预期 ~18% → 3-5%）
+- **Win32 坑**：`GetModuleHandleW` 在 kernel32 非 user32；**`CreateWindowExW` 的 DllImport 必须
+  `CharSet=Unicode`**——ANSI marshal 的 className 传给 W 函数 = 类名乱码 → 1407 找不到类 →
+  子窗口创建失败 → set_hwnd(0) → VLC 自建顶层弹窗（真机：弹窗只覆盖主屏、副屏黑）。
+  另：**Play 前子 HWND 必须已有正确尺寸**（0x0 → libvlc 弃嵌入）
+- **真机最终验证（双屏组视频壁纸跨屏拼接）**：窗口拓扑 `壁纸窗 → DMVlcVideoHost → VLC video
+  main → VLC video output` 三层嵌入，裁剪几何正确（主屏取画布右半、副屏左半），双屏画面
+  像素级对比均确认在播；VLC/WPF 各有一个隐藏辅助窗口（1440x753，invisible，无害）
+- **GPU 实测（Intel UHD 770，两壁纸进程合计）**：VideoDecode 引擎 avg ~29%（max 66%，
+  双份 3840x1080 解码的结构性成本——组壁纸每屏各解码全幅再裁半）；3D 引擎 avg ~9.7%
+  （WPF 合成器已移除，余下 present+DWM）。任务管理器口径（引擎最大值）≈29%。
+  与 MediaElement 时代 18% 基线不完全可比（当时副屏长期漂移反复 seek 未必满速解码）；
+  后续优化方向：单进程解码 + 纹理共享，或按屏预切割视频
 
 ## 背景
 

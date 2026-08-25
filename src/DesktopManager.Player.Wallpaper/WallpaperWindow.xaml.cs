@@ -121,6 +121,8 @@ public partial class WallpaperWindow : Window
                     _image.Visibility = Visibility.Collapsed;
                     _image.Source = null;
                     _vlc ??= new VlcVideoController(this);
+                    PlaceVideo();          // Play 前子 HWND 须有正确尺寸（0x0 → libvlc 弃嵌入自建弹窗，真机教训）
+                    _vlc.EnsureSized();    // 布局被跳过（窗口未度量）时兜底铺满父客户区
                     _vlc.Play(GetVideoCachedPath(w.Path));
                     _hasVideoContent = true;
                     _hasPlayback = true;
@@ -210,22 +212,7 @@ public partial class WallpaperWindow : Window
 
         if (_kind == WallpaperKind.Video)
         {
-            if (_vlc is null) return;
-            if (_canvasW <= 0 || _canvasH <= 0)
-            {
-                _vlc.UpdatePlacement(0, 0, winW, winH);
-            }
-            else if (_natW <= 0)
-            {
-                // 分辨率未知（vout 未就绪）：先铺满虚拟画布，SizeProbe 拿到后重布局
-                _vlc.UpdatePlacement(-_cropX, -_cropY, _canvasW, _canvasH);
-            }
-            else
-            {
-                double s = Math.Max(_canvasW / _natW, _canvasH / _natH);
-                double cw = _natW * s, ch = _natH * s;
-                _vlc.UpdatePlacement(-_cropX + (_canvasW - cw) / 2, -_cropY + (_canvasH - ch) / 2, cw, ch);
-            }
+            PlaceVideo();
             return;
         }
 
@@ -240,6 +227,27 @@ public partial class WallpaperWindow : Window
             double s = Math.Max(_canvasW / _natW, _canvasH / _natH);
             double cw = _natW * s, ch = _natH * s;
             Place(_image, -_cropX + (_canvasW - cw) / 2, -_cropY + (_canvasH - ch) / 2, cw, ch);
+        }
+    }
+
+    /// <summary>视频子 HWND 布局（组模式 cover 缩放 + 负偏移，同旧 MediaElement 的 Place）。</summary>
+    private void PlaceVideo()
+    {
+        if (_vlc is null) return;
+        if (_canvasW <= 0 || _canvasH <= 0)
+        {
+            _vlc.UpdatePlacement(0, 0, ActualWidth, ActualHeight);
+        }
+        else if (_natW <= 0)
+        {
+            // 分辨率未知（vout 未就绪）：先铺满虚拟画布，SizeProbe 拿到后重布局
+            _vlc.UpdatePlacement(-_cropX, -_cropY, _canvasW, _canvasH);
+        }
+        else
+        {
+            double s = Math.Max(_canvasW / _natW, _canvasH / _natH);
+            double cw = _natW * s, ch = _natH * s;
+            _vlc.UpdatePlacement(-_cropX + (_canvasW - cw) / 2, -_cropY + (_canvasH - ch) / 2, cw, ch);
         }
     }
 

@@ -18,6 +18,9 @@ internal sealed class VlcVideoController : IDisposable
     private const int SW_SHOW = 5;
     private const string HostClassName = "DMVlcVideoHost"; // 自有窗口类：黑底，避免 static 类默认灰底闪色
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WNDCLASSW
     {
@@ -34,12 +37,15 @@ internal sealed class VlcVideoController : IDisposable
     }
 
     [DllImport("user32.dll")] private static extern ushort RegisterClassW(ref WNDCLASSW wc);
-    [DllImport("user32.dll", SetLastError = true)]
+    // CharSet 必须 Unicode：className 传给 CreateWindowExW（W 版），ANSI marshal 会把类名变乱码
+    // → 1407 找不到类 → 子窗口创建失败 → set_hwnd(0) → VLC 自建弹窗（真机教训）
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr CreateWindowExW(int exStyle, string className, string windowName, int style,
         int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
     [DllImport("user32.dll")] private static extern bool DestroyWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool MoveWindow(IntPtr hwnd, int x, int y, int w, int h, bool repaint);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int cmd);
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandleW(string? name);
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi)] private static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
     [DllImport("gdi32.dll")] private static extern IntPtr GetStockObject(int i);
@@ -66,15 +72,20 @@ internal sealed class VlcVideoController : IDisposable
             hbrBackground = BlackBrush,
             lpszClassName = HostClassName,
         };
-        RegisterClassW(ref wc); // 重复注册（类已存在）报错可忽略——进程内第二个窗口起即如此
+        if (RegisterClassW(ref wc) == 0 && Marshal.GetLastWin32Error() != 1410 /*ERROR_CLASS_HAS_ALREADY_BEEN*/)
+            throw new InvalidOperationException($"RegisterClassW 失败 {Marshal.GetLastWin32Error()}");
         _hostHwnd = CreateWindowExW(0, HostClassName, "", WS_CHILD, 0, 0, 0, 0,
             parent, IntPtr.Zero, hInst, IntPtr.Zero);
+        if (_hostHwnd == IntPtr.Zero)
+            throw new InvalidOperationException($"CreateWindowExW 失败 {Marshal.GetLastWin32Error()}");
     }
 
     /// <summary>是否已下发视频内容（替代旧 MediaElement.Source 判空）。</summary>
     public bool HasContent { get; private set; }
 
-    /// <summary>播放视频（自动循环）。切换视频 = 后台释放旧播放器 + 重建。</summary>
+    /// <summary>播放视频（自动循环）。切换视频 = 后台释放旧播放器 + 重建。
+    /// 前置：须先 UpdatePlacement 给子 HWND 正确尺寸——libvlc 拿到 0x0 嵌入窗口会放弃
+    /// 嵌入、自建顶层弹窗渲染（真机教训：主屏出现独立 VLC 窗口、副屏黑屏）。</summary>
     public void Play(string path)
     {
         if (_libVLC is null)
@@ -96,6 +107,14 @@ internal sealed class VlcVideoController : IDisposable
         HasContent = true;
         ShowWindow(_hostHwnd, SW_SHOW);
         player.Play(media);
+    }
+
+    /// <summary>兜底尺寸：从未布局过（0x0）时先铺满父客户区，保证嵌入窗口对 libvlc 有效。</summary>
+    public void EnsureSized()
+    {
+        if (!GetClientRect(new WindowInteropHelper(_owner).Handle, out var rc)) return;
+        if (rc.right > 0 && rc.bottom > 0)
+            MoveWindow(_hostHwnd, 0, 0, rc.right, rc.bottom, repaint: false);
     }
 
     public void Pause()
