@@ -87,7 +87,7 @@ public partial class WallpaperWindow : Window
                 // GPU 优化④：视频分辨率高于屏幕 → 解码浪费（4K 视频在 1080p 屏全解码再缩小）
                 if (_natW > SystemParameters.PrimaryScreenWidth || _natH > SystemParameters.PrimaryScreenHeight)
                 {
-                    VideoOversized?.Invoke(_natW, _natH,
+                    VideoOversized?.Invoke((int)_natW, (int)_natH,
                         (int)SystemParameters.PrimaryScreenWidth, (int)SystemParameters.PrimaryScreenHeight);
                 }
             }
