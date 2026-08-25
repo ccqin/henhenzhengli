@@ -55,7 +55,8 @@ internal sealed class VlcVideoController : IDisposable
     private static readonly IntPtr BlackBrush = GetStockObject(4); // BLACK_BRUSH
 
     private readonly Window _owner;
-    private readonly IntPtr _hostHwnd;
+    private readonly IntPtr _hInst;
+    private IntPtr _hostHwnd;
     private LibVLC? _libVLC;
     private VlcMediaPlayer? _player;
 
@@ -63,29 +64,39 @@ internal sealed class VlcVideoController : IDisposable
     public VlcVideoController(Window owner)
     {
         _owner = owner;
-        var parent = new WindowInteropHelper(owner).Handle;
-        var hInst = GetModuleHandleW(null);
+        _hInst = GetModuleHandleW(null);
         var wc = new WNDCLASSW
         {
             lpfnWndProc = DefWindowProcPtr,
-            hInstance = hInst,
+            hInstance = _hInst,
             hbrBackground = BlackBrush,
             lpszClassName = HostClassName,
         };
         if (RegisterClassW(ref wc) == 0 && Marshal.GetLastWin32Error() != 1410 /*ERROR_CLASS_HAS_ALREADY_BEEN*/)
             throw new InvalidOperationException($"RegisterClassW 失败 {Marshal.GetLastWin32Error()}");
+        RecreateHost();
+    }
+
+    /// <summary>重建嵌入宿主子窗口。切换壁纸时旧播放器的 vout 还在后台拆除，
+    /// 新播放器若复用同一 HWND 会与残骸争抢 → libvlc 弃嵌入自建顶层弹窗（真机：桌面上浮出 VLC 窗口）。
+    /// 销毁旧宿主可连带拆掉其下的 VLC vout 窗口树，新播放器拿到干净宿主必能嵌入。</summary>
+    private void RecreateHost()
+    {
+        if (_hostHwnd != IntPtr.Zero) DestroyWindow(_hostHwnd); // 须在创建线程（UI 线程）调用
+        var parent = new WindowInteropHelper(_owner).Handle;
         _hostHwnd = CreateWindowExW(0, HostClassName, "", WS_CHILD, 0, 0, 0, 0,
-            parent, IntPtr.Zero, hInst, IntPtr.Zero);
+            parent, IntPtr.Zero, _hInst, IntPtr.Zero);
         if (_hostHwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowExW 失败 {Marshal.GetLastWin32Error()}");
+        // 先铺满父客户区：vout 启动时 0x0 宿主同样会被弃嵌入；组模式偏移由随后的 ApplyPlacement 矫正
+        if (GetClientRect(parent, out var rc) && rc.right > 0 && rc.bottom > 0)
+            MoveWindow(_hostHwnd, 0, 0, rc.right, rc.bottom, repaint: false);
     }
 
     /// <summary>是否已下发视频内容（替代旧 MediaElement.Source 判空）。</summary>
     public bool HasContent { get; private set; }
 
-    /// <summary>播放视频（自动循环）。切换视频 = 后台释放旧播放器 + 重建。
-    /// 前置：须先 UpdatePlacement 给子 HWND 正确尺寸——libvlc 拿到 0x0 嵌入窗口会放弃
-    /// 嵌入、自建顶层弹窗渲染（真机教训：主屏出现独立 VLC 窗口、副屏黑屏）。</summary>
+    /// <summary>播放视频（自动循环）。切换视频 = 重建宿主子窗口 + 后台释放旧播放器。</summary>
     public void Play(string path)
     {
         if (_libVLC is null)
@@ -94,6 +105,7 @@ internal sealed class VlcVideoController : IDisposable
             _libVLC = new LibVLC("--no-osd", "--no-audio");
         }
         ReplacePlayer();
+        RecreateHost();
         var player = new VlcMediaPlayer(_libVLC)
         {
             Hwnd = _hostHwnd,

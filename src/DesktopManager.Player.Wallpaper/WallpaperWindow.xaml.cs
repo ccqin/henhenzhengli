@@ -316,12 +316,16 @@ public partial class WallpaperWindow : Window
 
     private void StartVideoReport()
     {
-        _videoReportTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _videoReportTimer.Tick += (_, _) =>
+        // 订阅只注册一次（timer 复用）；否则每次切壁纸累积订阅 → 位置上报重复
+        if (_videoReportTimer is null)
         {
-            if (_kind == WallpaperKind.Video && _hasPlayback && !_paused && _vlc is not null)
-                VideoPositionChanged?.Invoke(_vlc.PositionMs);
-        };
+            _videoReportTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _videoReportTimer.Tick += (_, _) =>
+            {
+                if (_kind == WallpaperKind.Video && _hasPlayback && !_paused && _vlc is not null)
+                    VideoPositionChanged?.Invoke(_vlc.PositionMs);
+            };
+        }
         _videoReportTimer.Start();
     }
 
