@@ -44,6 +44,9 @@ public partial class WallpaperWindow : Window
     /// <summary>视频位置上报（App 转 IPC，主进程组内对齐用）。</summary>
     public event Action<double>? VideoPositionChanged;
 
+    /// <summary>视频分辨率超过屏幕（w,h,screenW,screenH）——GPU 浪费提示。</summary>
+    public event Action<int, int, int, int>? VideoOversized;
+
     private DispatcherTimer? _videoReportTimer;
     private GifBitmapDecoder? _gif;
     private DispatcherTimer? _gifTimer;
@@ -81,6 +84,12 @@ public partial class WallpaperWindow : Window
                 _natW = _video.NaturalVideoWidth;
                 _natH = _video.NaturalVideoHeight;
                 ApplyPlacement();
+                // GPU 优化④：视频分辨率高于屏幕 → 解码浪费（4K 视频在 1080p 屏全解码再缩小）
+                if (_natW > SystemParameters.PrimaryScreenWidth || _natH > SystemParameters.PrimaryScreenHeight)
+                {
+                    VideoOversized?.Invoke(_natW, _natH,
+                        (int)SystemParameters.PrimaryScreenWidth, (int)SystemParameters.PrimaryScreenHeight);
+                }
             }
         };
         Visibility = Visibility.Hidden;

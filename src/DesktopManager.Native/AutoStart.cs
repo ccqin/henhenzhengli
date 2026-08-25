@@ -68,3 +68,19 @@ public static class AutoStart
             key.DeleteValue(ValueName, throwOnMissingValue: false);
     }
 }
+
+/// <summary>GPU 偏好（多 GPU 系统）：壁纸/图标层子进程指定核显（PowerSaving），
+/// 壁纸渲染不需要独显性能，核显足够且大幅省电。注册表键 HKCU/DirectX/UserGpuPreferences。</summary>
+public static class GpuPreference
+{
+    public static void SetPowerSaving(string exePath)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(
+                "SOFTWARE\\Microsoft\\DirectX\\UserGpuPreferences");
+            key.SetValue(exePath, "GpuPreference=1;");
+        }
+        catch { }
+    }
+}

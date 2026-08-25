@@ -177,7 +177,8 @@ public sealed class MultiMonitorHost
             var args = $"--monitor-id {m.PersistentId} --device {m.DeviceName} --primary {(m.IsPrimary ? 1 : 0)} " +
                        $"--x {m.X} --y {m.Y} --w {m.Width} --h {m.Height} " +
                        $"--work-x {m.WorkX} --work-y {m.WorkY} --work-w {m.WorkWidth} --work-h {m.WorkHeight}";
-            var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
+            DesktopManager.Native.GpuPreference.SetPowerSaving(exe); // GPU 优化⑤：核显
+        var hwnd = player.StartAsync(exe, args).GetAwaiter().GetResult();
             DesktopLayerHost.AttachToDesktop(hwnd, m.WorkX, m.WorkY, m.WorkWidth, m.WorkHeight, iconLayer: true);
             _iconChildren[m.PersistentId] = new IconChild { Player = player, Monitor = m, Fences = fences, Positions = positions };
             player.Send(new Show());

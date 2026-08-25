@@ -41,6 +41,11 @@ public partial class App : Application
         // 关键：不能提前 Show——已显示的窗口被跨进程 SetParent 进 WorkerW 后 DWM 可能放弃
         // 合成（真机：窗口 vis=True 但纯黑）。EnsureHandle 只创建 hwnd 不显示，等主进程
         // SetParent 完成后发 Show 指令再显示。
+        _window.VideoOversized += (w, h, sw, sh) =>
+            IpcWriter.Write(Console.OpenStandardOutput(), new Error
+            {
+                Message = $"GPU提示：视频 {w}x{h} 高于屏幕 {sw}x{sh}，解码后再缩小浪费 GPU。建议使用 {sw}x{sh} 分辨率视频。",
+            });
         _window.VideoPositionChanged += pos =>
             IpcWriter.Write(Console.OpenStandardOutput(), new VideoPositionReport { PositionMs = pos });
         new System.Windows.Interop.WindowInteropHelper(_window).EnsureHandle();
