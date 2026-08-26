@@ -68,11 +68,19 @@ public sealed class MultiMonitorHost
     // M5-T4 恢复（M6 IPC 版）：组内视频漂移校正——2s 轮询，首成员位置为基准，|Δ|>0.5s 对齐。
     private System.Windows.Threading.DispatcherTimer? _videoSync;
     private readonly Dictionary<string, double> _videoPos = new(StringComparer.Ordinal); // monitorId → 最新位置 ms
+    // GPU 第三梯队·预处理：视频壁纸后台转 HEVC@≤30fps 缓存（解码负载减半），完成自动切换。
+    private readonly WallpaperTranscoder _transcoder;
 
     public MultiMonitorHost(IConfigStore store)
     {
         _store = store;
         _persistence = new Services.PersistenceService(store, BuildAggregatedConfig);
+        _transcoder = new WallpaperTranscoder(
+            AppContext.BaseDirectory,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "DesktopManager", "transcode"));
+        if (_transcoder.Available)
+            Log.Information("壁纸转码器就绪（ffmpeg + ffprobe 已找到，非 HEVC/高帧率壁纸将后台转码）");
         _videoSync = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _videoSync.Tick += (_, _) => SyncGroupVideos();
         _videoSync.Start();
@@ -416,6 +424,27 @@ public sealed class MultiMonitorHost
         }
     }
 
+    private int? ScreenWidthOf(string monitorId) =>
+        MonitorEnumerator.Enumerate().FirstOrDefault(m => m.PersistentId == monitorId)?.Width;
+
+    /// <summary>转码完成（线程池线程回调）：回 UI 线程重分发所有生效壁纸为该源视频的屏。</summary>
+    private void OnTranscodeReady(string srcPath)
+    {
+        var d = Application.Current?.Dispatcher;
+        if (d is null) return;
+        d.BeginInvoke(() =>
+        {
+            Log.Information("壁纸转码完成，重分发：{Src}", srcPath);
+            foreach (var mon in _wallpaperPlayers.Keys.ToList())
+            {
+                var (cfg, _) = ResolveWallpaper(mon);
+                if (cfg?.Kind == WallpaperKind.Video &&
+                    string.Equals(cfg.Path, srcPath, StringComparison.OrdinalIgnoreCase))
+                    ApplyWallpaperTo(mon);
+            }
+        });
+    }
+
     /// <summary>Governor 暂停所有壁纸播放（IPC）。</summary>
     public void PauseAllWallpapers()
     {
@@ -518,9 +547,23 @@ public sealed class MultiMonitorHost
         Log.Information("壁纸分发(IPC): {Mon} → cfg={Found} path={Path} canvas={Canvas}（独立 {N} 条 + 组 {G} 个）",
             monitorId, cfg is not null, cfg?.Path ?? "(null)", canvas is not null, _wallpapers.Count, _displayGroups.Count);
 
+        // GPU 第三梯队·预处理：视频壁纸替换为转码缓存（HEVC@≤30fps）——无缓存时先用原文件播，
+        // 转码完成后 OnTranscodeReady 重分发自动切换。组模式不缩放（拼接需原始分辨率），单屏缩到屏宽。
+        var playPath = cfg?.Path ?? "";
+        if (cfg?.Kind == WallpaperKind.Video && _transcoder.Available && File.Exists(playPath))
+        {
+            int? maxW = canvas is null ? ScreenWidthOf(monitorId) : null;
+            var cached = _transcoder.ResolvePlaybackPath(playPath, maxW, () => OnTranscodeReady(playPath));
+            if (cached is not null)
+            {
+                Log.Information("壁纸转码缓存命中：{Mon} {Src} → {Cache}", monitorId, playPath, cached);
+                playPath = cached;
+            }
+        }
+
         player.Send(new SetWallpaper
         {
-            Path = cfg?.Path ?? "",
+            Path = playPath,
             Kind = cfg is null ? "image" : cfg.Kind switch
             {
                 WallpaperKind.Video => "video",
@@ -705,6 +748,7 @@ public sealed class MultiMonitorHost
         foreach (var p in _wallpaperPlayers.Values) p.Stop();
         _wallpaperPlayers.Clear();
         _videoSync?.Stop();
+        _transcoder.Dispose(); // 终止在途转码子进程
     }
 
     // ---------- DTO 映射 ----------

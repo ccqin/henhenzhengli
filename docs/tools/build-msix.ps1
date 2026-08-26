@@ -24,7 +24,12 @@ dotnet publish (Join-Path $root "src\DesktopManager.App\DesktopManager.App.cspro
     -c Release -o $layout --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "publish 失败" }
 
-# 2) manifest + 图标进包根
+# 3) ffmpeg/ffprobe 进包（视频壁纸 HEVC@30 预处理，GPU 第三梯队·方案 2；缺失仅降级不转码）
+& (Join-Path $PSScriptRoot "get-ffmpeg.ps1")
+Copy-Item (Join-Path $artifacts "ffmpeg\ffmpeg.exe") $layout -Force
+Copy-Item (Join-Path $artifacts "ffmpeg\ffprobe.exe") $layout -Force
+
+# 4) manifest + 图标进包根
 Copy-Item (Join-Path $root "src\DesktopManager.App\Package.appxmanifest") (Join-Path $layout "AppxManifest.xml") -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $layout "Assets") | Out-Null
 Copy-Item (Join-Path $root "src\DesktopManager.App\Assets\icon44.png") $layout\Assets -Force
@@ -35,10 +40,10 @@ $manifest = Get-Content (Join-Path $layout "AppxManifest.xml") -Raw -Encoding UT
 $manifest = $manifest -replace 'Version="1\.0\.0\.0"', "Version=""$Version"""
 Set-Content (Join-Path $layout "AppxManifest.xml") $manifest -Encoding UTF8
 
-# 3) 清理不需要进包的产物（pdb 可留可去——留便于诊断）
+# 5) 清理不需要进包的产物（pdb 可留可去——留便于诊断）
 Get-ChildItem $layout -Filter "*.pdb" | Remove-Item
 
-# 4) makeappx
+# 6) makeappx
 $makeappx = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin\*\x64\makeappx.exe"
 $makeappx = (Get-Item $makeappx | Sort-Object FullName -Descending | Select-Object -First 1).FullName
 if (-not $makeappx) { throw "找不到 makeappx（需 Windows SDK）" }
@@ -47,7 +52,7 @@ Write-Host "==> makeappx"
 & $makeappx pack /d $layout /p $msix /nv
 if ($LASTEXITCODE -ne 0) { throw "makeappx 失败" }
 
-# 5) 签名（可选）
+# 7) 签名（可选）
 if ($CertThumbprint -ne "") {
     $signtool = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin\*\x64\signtool.exe"
     $signtool = (Get-Item $signtool | Sort-Object FullName -Descending | Select-Object -First 1).FullName
