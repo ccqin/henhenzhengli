@@ -13,6 +13,7 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ExportIconData), "exportIconData")]
 [JsonDerivedType(typeof(ExportFenceData), "exportFenceData")]
 [JsonDerivedType(typeof(ClearSelectionExcept), "clearSelectionExcept")]
+[JsonDerivedType(typeof(RequestReorder), "requestReorder")]
 [JsonDerivedType(typeof(FenceAction), "fenceAction")]
 [JsonDerivedType(typeof(IconAction), "iconAction")]
 [JsonDerivedType(typeof(SetWallpaper), "setWallpaper")]
@@ -106,6 +107,10 @@ public sealed record ClearSelectionExcept : IpcMessage
 {
     public string MonitorId { get; init; } = "";
 }
+
+/// <summary>图标层：请求主进程重排 Z 序（文本输入态结束/意外激活后，图标层须压回壁纸之上、
+/// 普通窗口之下的桌面层——owned 窗口自行 SendToBottom 会沉到壁纸之下，只能由主进程 BottomPair 配对）。</summary>
+public sealed record RequestReorder : IpcMessage;
 
 // ---- 主进程 → 子进程 ----
 

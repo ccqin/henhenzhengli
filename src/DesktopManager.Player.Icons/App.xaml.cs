@@ -43,6 +43,7 @@ public partial class App : Application, ICrossScreenHost
         };
         IconLayerWindow.OpenReported += (path, err) =>
             Reply(err is null ? new IconOpened { Path = path } : new Error { Message = $"打开失败 {path}: {err}" });
+        IconLayerWindow.ReorderRequested += () => Reply(new RequestReorder());
         _window.LayoutChanged += OnLayoutChangedLocal;  // 保底（已在前面挂过则无妨，Action 多播）
         IconLayerWindow.MenuApplied += n =>
             Reply(new IconAction { Action = "menu-applied", Detail = $"自定义 {n} 项已生效" });

@@ -191,27 +191,6 @@ public static class WindowInterop
         catch { /* 窗口已无效 */ }
     }
 
-    /// <summary>恢复 NOACTIVATE（用 EnableActivation 返回的 prevEx）并 SendToBottom 回桌面层 Z-order。
-    /// 必须 EnableActivation/RestoreNonInteractive 成对调用（try/finally 包裹）。prevEx 含原 NOACTIVATE。</summary>
-    public static void RestoreNonInteractive(IntPtr hWnd, long prevEx)
-    {
-        // prevEx 是 EnableActivation 抓取的快照（含 NOACTIVATE），直接 set 回去最安全。
-        // 多次调用幂等：当前 ex 已等于 prevEx 时 SetExtendedStyle 不会改变行为（Win32 Set 调用）。
-        try
-        {
-            SetExtendedStyle(hWnd, prevEx);
-        }
-        catch (Win32Exception)
-        {
-            // 极端场景（窗口已关闭等）不应阻塞调用方 finally。降级：仅尝试重 |NOACTIVATE，再失败就忽略。
-            try { SetExtendedStyle(hWnd, GetExtendedStyle(hWnd) | WS_EX_NOACTIVATE); }
-            catch { /* 窗口已无效，无法恢复，静默 */ }
-        }
-        try { SendToBottom(hWnd); }
-        catch (Win32Exception) { /* 同上：不阻塞 finally */ }
-    }
-
-
     /// <summary>让 hWnd 进入前台。AttachThreadInput trick：把当前前台窗口的线程 input 队列 attach 到本线程，
     /// 使 SetForegroundWindow 通过（绕过「非前台进程不能 SetForeground」限制），随后立即 detach。</summary>
     private static void ForceForeground(IntPtr hWnd)

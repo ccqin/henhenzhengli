@@ -320,10 +320,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             // WPF 随后把新窗口插入 Z-order 顶部，上面的 SendToBottom 被覆盖。
             // 双重保障：① ContentRendered（窗口已可见）后再置底一次；
             // ② Activated 守卫：非输入态被意外激活（Alt+Tab/其他路径）立即压回底部。
+            // 顶层形态下压回 = 请主进程 BottomPair（本窗口自行置底会沉到壁纸之下，见 EndInput 注释）。
             Activated += (_, _) =>
             {
                 if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底
-                };
+                RequestReorder();
+            };
         };
 
         // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
@@ -808,6 +810,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     // BeginInput 临时去 NOACTIVATE + 前台化；EndInput 恢复 NOACTIVATE + SendToBottom 回桌面层。
     // 严格成对：FenceControl.BeginTitleEdit/EndTitleEdit、RenameDialog.AskRename 的 try/finally 保证。
 
+    /// <summary>输入态结束/意外激活后请求主进程重排 Z 序（BottomPair：图标层置底 + 壁纸插其下）。
+    /// 本窗口不能自行 SendToBottom——owned 窗口置底会沉到壁纸之下（真机：改名回车后全部图标消失）。</summary>
+    public static event Action? ReorderRequested;
+
+    private static void RequestReorder() => ReorderRequested?.Invoke();
+
     /// <summary>临时去 WS_EX_NOACTIVATE 并前台化，让 app 内 TextBox 可接收键盘输入。</summary>
     public void BeginInput()
     {
@@ -817,15 +825,18 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _inputActive = true;
     }
 
-    /// <summary>恢复 WS_EX_NOACTIVATE 并 SendToBottom 回桌面层 Z-order。</summary>
+    /// <summary>恢复 WS_EX_NOACTIVATE（不动 Z 序），Z 序压回桌面层由主进程 BottomPair 完成。</summary>
     public void EndInput()
     {
         if (!_inputActive) return; // 与 BeginInput 未配对（如 BeginInput 早返回）：no-op 防误恢复
         if (_hwnd != IntPtr.Zero)
         {
-            WindowInterop.RestoreNonInteractive(_hwnd, _noActivatePrevEx);
+            // 不能用 RestoreNonInteractive（含 SendToBottom）：owned 窗口置底会压到壁纸之下
+            // → 桌面图标全消失（真机踩坑 ×2：系统菜单弹窗恢复、收纳盒改名回车）。
+            WindowInterop.RestoreNoActivateStyle(_hwnd, _noActivatePrevEx);
         }
         _inputActive = false;
+        RequestReorder(); // 前台化把窗口顶到了 Z 序顶部，交主进程配对压回
     }
 
     // ---------- T3：画布空白 Drop（从 Fence 内容区拖出到空白） ----------

@@ -321,6 +321,12 @@ public sealed class MultiMonitorHost
                 Services.LogDb.Audit("fence", fa.Action, fa.Title, monitorId);
                 break;
 
+            case RequestReorder:
+                // 图标层输入态结束/意外激活后 Z 序须压回桌面层：本进程 BottomPair 配对
+                // （图标层置底 + 壁纸插其下）。消息不区分屏（多屏图标层共享静态事件），全屏重排幂等。
+                foreach (var mon in _iconChildren.Keys.ToList()) BottomPair(mon);
+                break;
+
             case IconAction ia:
                 Services.LogDb.Audit("icon", ia.Action, ia.Detail is { Length: > 0 } ? ia.Detail : ia.Path, monitorId);
                 break;
