@@ -289,6 +289,9 @@ public sealed class MultiMonitorHost
             DesktopLayerHost.AttachToDesktop(hwnd, m.X, m.Y, m.Width, m.Height - 2);
             _wallpaperPlayers[m.PersistentId] = player;
             player.Send(new Show());
+            // 壁纸重启（异常退出自动拉起/拓扑重建）时新窗口以顶层身份插 Z 序顶部，会盖住图标层
+            // → 挂载后必须 BottomPair 重排（图标层启动路径本有，此处补齐壁纸路径；真机：壁纸重启后图标层"消失"）
+            BottomPair(m.PersistentId);
             ApplyWallpaperTo(m.PersistentId);
         }
         catch (Exception ex)
