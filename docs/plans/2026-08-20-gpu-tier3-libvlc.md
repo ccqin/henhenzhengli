@@ -159,3 +159,25 @@
 | 包体积 | 25MB | ~95MB |
 | 视频格式支持 | WMP 子集 | 几乎全部 |
 | 帧率 | 原生 | 原生 |
+
+## 后续梯队：ffmpeg HEVC 预处理（方案 2，2026-08-26 落地，6ec7c17）
+
+- **实测收益**：VideoDecode 引擎 avg 33.8%→18.8%（-44%），峰值 66.6%→38.8%（UHD 770 双屏组壁纸）
+- 架构：`ApplyWallpaperTo` 分发前替换缓存路径（%APPDATA%\DesktopManager\transcode，
+  MD5+算法版本键控）；无缓存先播原文件（零等待），转码完成回 UI 线程重分发自动切换
+- 决策：非 HEVC / fps>30 降 30 / 单屏超屏缩放（组模式保原始尺寸）；qsv 硬编优先 x265 兜底
+- **坑**：HEVC in MP4 必须 `-tag:v hvc1`（qsv 默认 hev1 参数集带内 → VLC 3.x demux 卡死、
+  无帧输出 + 子进程内存暴涨 ~700MB）；算法版本号进缓存键自动失效旧缓存
+- 工具链：`docs/tools/get-ffmpeg.ps1`（BtbN GPL 构建断点续传；gyan.dev 国内 SSL 常被重置）；
+  打包进 MSIX 或手动放 %APPDATA%\DesktopManager\tools\（Debug 直跑）
+- 代价：MSIX 增重 ~290MB（ffmpeg+ffprobe）；HEVC 解码表面池使壁纸进程内存波动大
+  （观察到 150MB~750MB 两档，D3D11 按需分配，稳定不涨）
+- 待办：MSIX 实际打包验证；可选改"运行时首次下载"省包体
+
+## 顶层窗口形态 Z 序守则（2026-08-26 两次图标消失教训，4a691ca/b04fbe8）
+
+桌面层（owner=SHELLDLL_DefView 的 owned 兄弟窗口）Z 序**只能由主进程 BottomPair 配对维护**
+（图标层置底 + 壁纸插其正下方）。子进程任何自行 SendToBottom / 以顶层身份入序都会破坏：
+- 壁纸子进程重启 → 新窗口插 Z 顶盖住图标层（修复：挂载后 BottomPair）
+- 图标层 EndInput → SendToBottom 沉到壁纸之下（修复：只恢复样式 + IPC RequestReorder
+  请主进程重排；危险方法 RestoreNonInteractive 已删除防复踩）
