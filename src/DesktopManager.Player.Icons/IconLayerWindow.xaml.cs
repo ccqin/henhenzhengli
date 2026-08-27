@@ -841,6 +841,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
     // ---------- T3：画布空白 Drop（从 Fence 内容区拖出到空白） ----------
 
+    // 拖拽诊断：DragOver 高频触发，formats 摘要变化时才记一条（新拖入会话的首条即可定位问题）
+    private string? _lastDragFormats;
+
     private void IconCanvas_DragOver(object sender, DragEventArgs e)
     {
         // FileDrop（外部文件从 explorer/文件夹拖入）或 Text（app 图标拖出空白）都接受 Move；其他 None。
@@ -848,6 +851,14 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         e.Effects = (e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(DataFormats.Text))
             ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
+
+        var fmt = string.Join(",", e.Data.GetFormats());
+        if (!string.Equals(fmt, _lastDragFormats, StringComparison.Ordinal))
+        {
+            _lastDragFormats = fmt;
+            Log.Debug("拖入会话 DragOver：formats=[{Formats}] FileDrop={HasFileDrop} Text={HasText}",
+                fmt, e.Data.GetDataPresent(DataFormats.FileDrop), e.Data.GetDataPresent(DataFormats.Text));
+        }
     }
 
     private void IconCanvas_Drop(object sender, DragEventArgs e)
@@ -929,11 +940,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         if (e.Data.GetDataPresent(DataFormats.FileDrop))
         {
             var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            Log.Debug("Drop FileDrop 分支：{Count} 项 [{First}]", files?.Length ?? 0, files is { Length: > 0 } ? files[0] : "");
             if (files is not null && files.Length > 0) MoveExternalFilesToDesktop(files);
             e.Handled = true;
             return;
         }
 
+        Log.Debug("Drop 无处理格式：formats=[{Formats}]", string.Join(",", e.Data.GetFormats()));
         e.Handled = true; // 其他格式：吞掉，避免冒泡到无处理者
     }
 
@@ -959,15 +972,21 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         foreach (var p in plans)
         {
             if (p.Target is null) continue; // 已在桌面，跳过
-            // Minor 2：跳过目录（File.Move 对目录抛异常；M2 范围仅文件，目录拖入 YAGNI）。
-            // Plan 是纯函数不碰 FS（单测隔离），目录守卫留在调用方，保持 Plan 决策可单测。
-            if (Directory.Exists(p.Source)) continue;
             try
             {
-                // 跨卷 File.Move 抛 IOException → 降级 Copy + Delete（与 explorer 跨卷默认"复制"语义对齐，
-                // 但本工具按 DragDropEffects.Move 语义最终删除源，符合用户从文件夹"移到桌面"的预期）。
-                try { File.Move(p.Source, p.Target); }
-                catch (IOException) { File.Copy(p.Source, p.Target); File.Delete(p.Source); }
+                if (Directory.Exists(p.Source))
+                {
+                    // 目录拖入：同卷 Directory.Move；跨卷 IOException 降级递归复制+删源（对齐文件路径的降级策略）
+                    try { Directory.Move(p.Source, p.Target); }
+                    catch (IOException) { CopyDirectory(p.Source, p.Target); Directory.Delete(p.Source, recursive: true); }
+                }
+                else
+                {
+                    // 跨卷 File.Move 抛 IOException → 降级 Copy + Delete（与 explorer 跨卷默认"复制"语义对齐，
+                    // 但本工具按 DragDropEffects.Move 语义最终删除源，符合用户从文件夹"移到桌面"的预期）。
+                    try { File.Move(p.Source, p.Target); }
+                    catch (IOException) { File.Copy(p.Source, p.Target); File.Delete(p.Source); }
+                }
             }
             catch (Exception ex)
             {
@@ -975,6 +994,16 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 Log.Warning(ex, "IconCanvas_Drop：移动外部文件 {Source} -> {Target} 失败", p.Source, p.Target);
             }
         }
+    }
+
+    /// <summary>递归复制目录（目录拖入跨卷降级用）。</summary>
+    private static void CopyDirectory(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var f in Directory.EnumerateFiles(src))
+            File.Copy(f, Path.Combine(dst, Path.GetFileName(f)));
+        foreach (var d in Directory.EnumerateDirectories(src))
+            CopyDirectory(d, Path.Combine(dst, Path.GetFileName(d)));
     }
 
     // ---------- B2：框选多选 ----------
