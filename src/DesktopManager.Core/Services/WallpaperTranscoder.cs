@@ -42,6 +42,26 @@ public sealed class WallpaperTranscoder : IDisposable
         _ffprobe = FirstExists(probeDirs, "ffprobe.exe");
         _cacheRoot = cacheRoot;
         Directory.CreateDirectory(cacheRoot);
+        CleanupStale();
+    }
+
+    /// <summary>缓存 LRU：命中即 Touch（活跃缓存永不过期），启动时清理 14 天未访问的陈旧文件
+    /// （换壁纸后旧缓存自然过期；误删活跃缓存仅代价一次重转码，几秒）。</summary>
+    private void CleanupStale()
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-14);
+            foreach (var f in Directory.EnumerateFiles(_cacheRoot, "*.mp4"))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(f) < cutoff) File.Delete(f);
+                }
+                catch { /* 单文件失败忽略 */ }
+            }
+        }
+        catch { /* 目录不可读忽略 */ }
     }
 
     /// <summary>ffmpeg/ffprobe 就绪（缺一即关）。</summary>
@@ -73,7 +93,11 @@ public sealed class WallpaperTranscoder : IDisposable
         if (!plan.Needed) return null;
 
         var cached = CachePath(srcPath, plan);
-        if (File.Exists(cached)) return cached;
+        if (File.Exists(cached))
+        {
+            try { File.SetLastWriteTimeUtc(cached, DateTime.UtcNow); } catch { } // LRU Touch
+            return cached;
+        }
         StartTranscode(srcPath, cached, plan, onReady);
         return null;
     }

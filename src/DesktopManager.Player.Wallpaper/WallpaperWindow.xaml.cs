@@ -345,7 +345,9 @@ public partial class WallpaperWindow : Window
                 _natW = w;
                 _natH = h;
                 ApplyPlacement();
-                if (w > SystemParameters.PrimaryScreenWidth || h > SystemParameters.PrimaryScreenHeight)
+                // 组模式跳过超屏检测：拼接视频分辨率=虚拟画布（3840x1080=两屏）高于单屏是正常态，不是浪费
+                if (_canvasW <= 0 &&
+                    (w > SystemParameters.PrimaryScreenWidth || h > SystemParameters.PrimaryScreenHeight))
                 {
                     VideoOversized?.Invoke((int)w, (int)h,
                         (int)SystemParameters.PrimaryScreenWidth, (int)SystemParameters.PrimaryScreenHeight);
