@@ -35,18 +35,7 @@ internal sealed class PersistenceService : IDisposable
     public void SaveImmediately()
     {
         if (_disabled) return;
-        try
-        {
-            lock (_lock)
-            {
-                if (_disabled) return;
-                _store.Save(_buildAggregated());
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "PersistenceService 立即保存失败");
-        }
+        SaveCore("immediate");
     }
 
     /// <summary>立即保存（不等防抖）。退出路径用。</summary>
@@ -54,13 +43,37 @@ internal sealed class PersistenceService : IDisposable
     {
         _disabled = true;
         try { _saveTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); } catch { }
+        SaveCore("final");
+    }
+
+    /// <summary>统一保存核心：聚合 + 诊断日志 + 僵尸写防护。
+    /// 真机教训（2026-08-27）：一次退出保存把 145 个图标位置+收纳盒写成空——聚合来源为空时
+    /// 若磁盘上已有数据，宁可不写也不清空（桌面图标永在，Positions 为空只可能是异常态）。</summary>
+    private void SaveCore(string reason)
+    {
         try
         {
-            lock (_lock) _store.Save(_buildAggregated());
+            AppConfig snapshot;
+            lock (_lock) snapshot = _buildAggregated();
+            if (snapshot.IconPositions.Count == 0)
+            {
+                var onDisk = _store.Load();
+                if (onDisk.IconPositions.Count > 0)
+                {
+                    Log.Warning("跳过空快照保存（{Reason}）：聚合 0 位置，磁盘 {N} 条——防僵尸实例清空配置",
+                        reason, onDisk.IconPositions.Count);
+                    return;
+                }
+            }
+            lock (_lock)
+            {
+                _store.Save(snapshot);
+            }
+            Log.Debug("config 保存（{Reason}）：{F} 收纳盒 / {P} 位置", reason, snapshot.Fences.Count, snapshot.IconPositions.Count);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "PersistenceService 立即保存失败");
+            Log.Warning(ex, "PersistenceService 保存失败（{Reason}）", reason);
         }
     }
 
@@ -78,18 +91,7 @@ internal sealed class PersistenceService : IDisposable
     private void OnElapsed()
     {
         if (_disabled) return;
-        try
-        {
-            lock (_lock)
-            {
-                if (_disabled) return;
-                _store.Save(_buildAggregated());
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "PersistenceService 防抖保存失败");
-        }
+        SaveCore("debounce");
     }
 
     public void Dispose() => _saveTimer.Dispose();
