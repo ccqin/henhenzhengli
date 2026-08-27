@@ -93,7 +93,11 @@ public static class LogDb
                 cmd.ExecuteNonQuery();
             }
         }
-        catch { /* 同上 */ }
+        catch (Exception ex)
+        {
+            // 降级留痕：审计静默失败曾掩盖整段缺失（真机：ops 表 8 天零记录无任何痕迹），至少写文件日志
+            try { Serilog.Log.Warning("ops 审计写入失败：{Kind}/{Action} {Err}", kind, action, ex.Message); } catch { }
+        }
     }
 
     // ---- 查询（设置窗口日志页） ----

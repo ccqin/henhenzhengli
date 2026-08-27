@@ -319,6 +319,7 @@ public sealed class MultiMonitorHost
 
             case FenceAction fa:
                 Services.LogDb.Audit("fence", fa.Action, fa.Title, monitorId);
+                SaveImmediately(); // 建盒/删盒：语义级低频操作，立即落盘（防抖窗口被杀即丢数据）
                 break;
 
             case RequestReorder:
@@ -329,6 +330,7 @@ public sealed class MultiMonitorHost
 
             case IconAction ia:
                 Services.LogDb.Audit("icon", ia.Action, ia.Detail is { Length: > 0 } ? ia.Detail : ia.Path, monitorId);
+                if (ia.Action is "rename" or "delete") SaveImmediately(); // 高频 open 等不落；破坏性/改名立即
                 break;
 
             case ClearSelectionExcept cs:
@@ -397,7 +399,7 @@ public sealed class MultiMonitorHost
             Path = path
         });
         ApplyWallpaperTo(monitorId);
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
         Services.LogDb.Audit("wallpaper", "set", path, monitorId);
         Log.Information("壁纸已设置：{Mon} ← {Path}", monitorId, path);
     }
@@ -407,7 +409,7 @@ public sealed class MultiMonitorHost
     {
         _wallpapers.RemoveAll(w => string.Equals(w.MonitorId, monitorId, StringComparison.Ordinal));
         ApplyWallpaperTo(monitorId);
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
         Services.LogDb.Audit("wallpaper", "remove", "", monitorId);
         Log.Information("壁纸已移除：{Mon}", monitorId);
     }
@@ -485,7 +487,7 @@ public sealed class MultiMonitorHost
         foreach (var c in _iconChildren.Values)
             c.Player.Send(new SetAppearance { IconSize = iconSize, LabelStyle = labelStyle });
         Services.LogDb.Audit("settings", "appearance", $"图标 {iconSize}px / 标签 {labelStyle}");
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
     }
 
     public AppearanceConfig Appearance => _appearance;
@@ -506,7 +508,7 @@ public sealed class MultiMonitorHost
             });
         Services.LogDb.Audit("settings", "menu",
             $"内置(开/关) + 自定义 {menu.CustomItems.Count} 项");
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
     }
 
     public MenuConfig Menu => _menu;
@@ -516,7 +518,7 @@ public sealed class MultiMonitorHost
     {
         DesktopManager.Native.AutoStart.SetEnabled(enabled);
         Services.LogDb.Audit("settings", "autostart", enabled ? "开启" : "关闭");
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
     }
 
     public bool AutoStartEnabled => DesktopManager.Native.AutoStart.IsEnabled();
@@ -527,7 +529,7 @@ public sealed class MultiMonitorHost
         Services.LogDb.Audit("settings", "groups", $"显示组 {groups.Count} 个");
         _displayGroups = groups.ToList();
         foreach (var mon in _iconChildren.Keys.ToList()) ApplyWallpaperTo(mon);
-        RequestSave();
+        SaveImmediately(); // 关键低频操作立即落盘
     }
 
     /// <summary>M5：壁纸解析优先级：有壁纸的组（成员屏）&gt; 独立壁纸 &gt; null。</summary>
@@ -723,6 +725,8 @@ public sealed class MultiMonitorHost
     // ---------- 聚合持久化 ----------
 
     private void RequestSave() => _persistence.RequestSave();
+
+    private void SaveImmediately() => _persistence.SaveImmediately();
 
     /// <summary>聚合所有子进程布局缓存 + 孤儿配置（离线屏数据不丢）。</summary>
     private AppConfig BuildAggregatedConfig()

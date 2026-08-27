@@ -30,6 +30,25 @@ internal sealed class PersistenceService : IDisposable
         lock (_lock) _saveTimer.Change(Debounce, Timeout.InfiniteTimeSpan);
     }
 
+    /// <summary>立即保存（保持后续防抖能力）。关键低频操作（建盒/改名/删盒/壁纸/设置类）专用——
+    /// 防抖窗口内进程被杀会丢最近改动（真机：收纳盒数据丢失）；高频操作（拖图标）仍走防抖。</summary>
+    public void SaveImmediately()
+    {
+        if (_disabled) return;
+        try
+        {
+            lock (_lock)
+            {
+                if (_disabled) return;
+                _store.Save(_buildAggregated());
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "PersistenceService 立即保存失败");
+        }
+    }
+
     /// <summary>立即保存（不等防抖）。退出路径用。</summary>
     public void SaveNow()
     {
