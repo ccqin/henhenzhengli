@@ -5,6 +5,7 @@ using DesktopManager.Core.Models;
 using DesktopManager.Core.Services;
 using DesktopManager.Ipc;
 using DesktopManager.Native;
+using Serilog;
 
 namespace DesktopManager.Player.Icons;
 
@@ -21,7 +22,7 @@ public partial class App : Application, ICrossScreenHost
     protected override void OnStartup(StartupEventArgs e)
     {
         // 子进程日志 → stderr（主进程统一转发进主日志/日志 db；此前 Serilog 未初始化，Log.* 全部静默）
-        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+        Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Console()
             .CreateLogger();
