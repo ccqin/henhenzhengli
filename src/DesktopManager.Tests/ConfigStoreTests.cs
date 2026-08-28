@@ -193,4 +193,50 @@ public class ConfigStoreTests
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
+
+    [Fact] // 备份轮换：Save 两次后 .backup 保留上一版内容
+    public void Save_Twice_BackupHoldsPreviousVersion()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            var store = new ConfigStore(path);
+            store.Save(new AppConfig { Fences = new[] { new FenceConfig { Id = "v1", Title = "第一版" } } });
+            store.Save(new AppConfig { Fences = new[] { new FenceConfig { Id = "v2", Title = "第二版" } } });
+
+            Assert.True(File.Exists(path + ".backup"));
+            var backup = store.Load(); // 主文件应是第二版
+            Assert.Equal("v2", backup.Fences[0].Id);
+            // backup 文件本身应是第一版
+            var backupCfg = new ConfigStore(path + ".backup").Load();
+            Assert.Equal("v1", backupCfg.Fences[0].Id);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".backup")) File.Delete(path + ".backup");
+        }
+    }
+
+    [Fact] // 主文件损坏 → Load 回退备份（数据安全双保险）
+    public void Load_CorruptedMainFile_FallsBackToBackup()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        try
+        {
+            var store = new ConfigStore(path);
+            store.Save(new AppConfig { Fences = new[] { new FenceConfig { Id = "好数据", Title = "T" } } });
+            store.Save(new AppConfig { Fences = new[] { new FenceConfig { Id = "更新", Title = "T2" } } });
+            File.WriteAllText(path, "{ 这是坏掉的 JSON"); // 模拟主文件损坏
+
+            var loaded = store.Load();
+            Assert.Single(loaded.Fences);
+            Assert.Equal("好数据", loaded.Fences[0].Id); // 回退到备份的上一版
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".backup")) File.Delete(path + ".backup");
+        }
+    }
 }
