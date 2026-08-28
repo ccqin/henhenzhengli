@@ -20,6 +20,12 @@ public partial class App : Application, ICrossScreenHost
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 子进程日志 → stderr（主进程统一转发进主日志/日志 db；此前 Serilog 未初始化，Log.* 全部静默）
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.Console()
+            .CreateLogger();
+
         // 可选软渲染（诊断开关）：默认硬件渲染（M5 顶层形态验证过）。
         if (Environment.GetEnvironmentVariable("DESKTOPMGR_SWRENDER") == "1")
             System.Windows.Media.RenderOptions.ProcessRenderMode =

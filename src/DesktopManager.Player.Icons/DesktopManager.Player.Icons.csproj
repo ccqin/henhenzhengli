@@ -17,4 +17,9 @@
     <ProjectReference Include="..\DesktopManager.Native\DesktopManager.Native.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 图标层日志 → stderr（主进程 ChildProcessManager 统一转发进主日志/db） -->
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.2.0" />
+  </ItemGroup>
+
 </Project>
