@@ -23,11 +23,13 @@ Write-Host "==> dotnet publish (Release)"
 dotnet publish (Join-Path $root "src\DesktopManager.App\DesktopManager.App.csproj") `
     -c Release -o $layout --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "publish 失败" }
+# MSBuild build-server 节点驻留会持有 stdout 管道 → 脚本在 CI/后台挂起（真机踩坑 ×2）
+dotnet build-server shutdown | Out-Null
 
-# 3) ffmpeg/ffprobe 进包（视频壁纸 HEVC@30 预处理，GPU 第三梯队·方案 2；缺失仅降级不转码）
+# 3) ffmpeg 进包（视频壁纸 HEVC@30 预处理，GPU 第三梯队·方案 2；缺失仅降级不转码。
+#    探测用 ffmpeg -i 解析，不带 ffprobe——省一半工具体积）
 & (Join-Path $PSScriptRoot "get-ffmpeg.ps1")
 Copy-Item (Join-Path $artifacts "ffmpeg\ffmpeg.exe") $layout -Force
-Copy-Item (Join-Path $artifacts "ffmpeg\ffprobe.exe") $layout -Force
 
 # 4) manifest + 图标进包根
 Copy-Item (Join-Path $root "src\DesktopManager.App\Package.appxmanifest") (Join-Path $layout "AppxManifest.xml") -Force
@@ -49,8 +51,11 @@ $makeappx = (Get-Item $makeappx | Sort-Object FullName -Descending | Select-Obje
 if (-not $makeappx) { throw "找不到 makeappx（需 Windows SDK）" }
 $msix = Join-Path $artifacts "DesktopManager_${Version}_x64.msix"
 Write-Host "==> makeappx"
-& $makeappx pack /d $layout /p $msix /nv
+# 先写临时名再替换：目标文件被 explorer 预览/杀毒扫描短暂持有时直接 /p 目标会静默失败（真机踩坑）
+$msixTmp = $msix + ".tmp"
+& $makeappx pack /d $layout /p $msixTmp /nv
 if ($LASTEXITCODE -ne 0) { throw "makeappx 失败" }
+Move-Item $msixTmp $msix -Force
 
 # 7) 签名（可选）
 if ($CertThumbprint -ne "") {

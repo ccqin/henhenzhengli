@@ -1,8 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace DesktopManager.Core.Services;
 
@@ -24,7 +25,6 @@ public sealed class WallpaperTranscoder : IDisposable
     private const int FpsTolerance = 2; // fps 超过 30+FpsTolerance 才降（59.94/60 降，30/1 不动）
 
     private readonly string _ffmpeg;
-    private readonly string _ffprobe;
     private readonly string _cacheRoot;
     private readonly Dictionary<string, VideoProbe> _probeCache = new();   // key: 绝对路径|mtime
     private readonly Dictionary<string, byte> _inflight = new();           // 去重并发转码
@@ -33,17 +33,20 @@ public sealed class WallpaperTranscoder : IDisposable
     public WallpaperTranscoder(string? toolsDir, string cacheRoot)
     {
         // 工具查找：toolsDir（应用/包目录）→ %APPDATA%\DesktopManager\tools
+        // 只需 ffmpeg.exe：探测用 `ffmpeg -i` 的 stderr 解析（无需 ffprobe，省一半工具体积）
         var probeDirs = new List<string>();
         if (!string.IsNullOrWhiteSpace(toolsDir)) probeDirs.Add(toolsDir);
         var userTools = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DesktopManager", "tools");
         probeDirs.Add(userTools);
-        _ffmpeg = FirstExists(probeDirs, "ffmpeg.exe");
-        _ffprobe = FirstExists(probeDirs, "ffprobe.exe");
+        _ffmpeg = probeDirs.Select(d => Path.Combine(d, "ffmpeg.exe")).FirstOrDefault(File.Exists) ?? "";
         _cacheRoot = cacheRoot;
         Directory.CreateDirectory(cacheRoot);
         CleanupStale();
     }
+
+    /// <summary>ffmpeg 就绪（缺则功能整体关闭）。</summary>
+    public bool Available => _ffmpeg.Length > 0;
 
     /// <summary>缓存 LRU：命中即 Touch（活跃缓存永不过期），启动时清理 14 天未访问的陈旧文件
     /// （换壁纸后旧缓存自然过期；误删活跃缓存仅代价一次重转码，几秒）。</summary>
@@ -64,13 +67,8 @@ public sealed class WallpaperTranscoder : IDisposable
         catch { /* 目录不可读忽略 */ }
     }
 
-    /// <summary>ffmpeg/ffprobe 就绪（缺一即关）。</summary>
-    public bool Available => _ffmpeg.Length > 0 && _ffprobe.Length > 0;
 
     public string CacheRoot => _cacheRoot;
-
-    private static string FirstExists(IEnumerable<string> dirs, string exe)
-        => dirs.Select(d => Path.Combine(d, exe)).FirstOrDefault(File.Exists) ?? "";
 
     /// <summary>决策：HEVC 已达标（编码 hevc + fps≤阈值 + 不超宽）→ 无需转码；
     /// 否则按需给：换 HEVC 编码 + 缩放宽（maxW 内，偶数对齐 x265）+ 目标帧率 30。</summary>
@@ -109,51 +107,42 @@ public sealed class WallpaperTranscoder : IDisposable
         var key = ProbeKey(path);
         if (_probeCache.TryGetValue(key, out var cached)) return cached;
 
+        // `ffmpeg -i` 无输出参数 → 退出码 1（"At least one output file..."），流信息在 stderr——正常路径
         var psi = new ProcessStartInfo
         {
-            FileName = _ffprobe,
-            Arguments = $"-v error -select_streams v:0 -show_entries stream=codec_name,r_frame_rate,width,height -of json \"{path}\"",
+            FileName = _ffmpeg,
+            Arguments = $"-hide_banner -i \"{path}\"",
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
         using var p = Process.Start(psi);
         if (p is null) return null;
-        var stdout = p.StandardOutput.ReadToEnd();
+        var stderr = p.StandardError.ReadToEnd();
         p.WaitForExit(5000);
-        if (p.ExitCode != 0) return null;
 
-        var probe = ParseProbe(stdout);
+        var probe = ParseFfmpegProbe(stderr);
         if (probe is not null) _probeCache[key] = probe;
         return probe;
     }
 
-    /// <summary>ffprobe JSON 解析（r_frame_rate 形如 "60000/1001"/"30/1"）。</summary>
-    public static VideoProbe? ParseProbe(string json)
+    /// <summary>解析 `ffmpeg -i` 的 stderr 流信息行（纯函数，单测覆盖）。典型：
+    /// <code>Stream #0:0[0x1]: Video: h264 (High) (avc1 / 0x31637661), yuv420p, 3840x1080 [SAR 1:1 DAR 32:9], 786 kb/s, 24 fps, 24 tbr, ...</code>
+    /// fps 缺失时回退 tbr；无 Video 行/解析失败返回 null。</summary>
+    public static VideoProbe? ParseFfmpegProbe(string stderr)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var s = doc.RootElement.GetProperty("streams")[0];
-            string codec = s.GetProperty("codec_name").GetString() ?? "";
-            int w = s.GetProperty("width").GetInt32();
-            int h = s.GetProperty("height").GetInt32();
-            double fps = ParseRate(s.GetProperty("r_frame_rate").GetString() ?? "0/1");
-            if (w <= 0 || h <= 0 || fps <= 0) return null;
-            return new VideoProbe(codec, fps, w, h);
-        }
-        catch
-        {
-            return null;
-        }
+        var line = stderr.Split('\n').FirstOrDefault(l => l.Contains(": Video: "));
+        if (line is null) return null;
+        var codec = Regex.Match(line, @"Video: (\w+)");
+        var dim = Regex.Match(line, @"(\d{2,5})x(\d{2,5})");
+        if (!codec.Success || !dim.Success) return null;
+        var fps = Regex.Match(line, @"([\d.]+) fps") is { Success: true } f
+            ? f : Regex.Match(line, @"([\d.]+) tbr");
+        if (!int.TryParse(dim.Groups[1].Value, out var w) || !int.TryParse(dim.Groups[2].Value, out var h)) return null;
+        var rate = fps.Success ? double.Parse(fps.Groups[1].Value, CultureInfo.InvariantCulture) : 0;
+        if (w <= 0 || h <= 0 || rate <= 0) return null;
+        return new VideoProbe(codec.Groups[1].Value, rate, w, h);
     }
 
-    public static double ParseRate(string rate)
-    {
-        var parts = rate.Split('/');
-        if (parts.Length == 2 && double.TryParse(parts[0], out var n) && double.TryParse(parts[1], out var d) && d != 0)
-            return n / d;
-        return double.TryParse(rate, out var v) ? v : 0;
-    }
 
     private static string ProbeKey(string path)
     {

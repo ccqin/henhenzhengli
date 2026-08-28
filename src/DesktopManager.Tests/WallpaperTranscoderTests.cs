@@ -48,40 +48,59 @@ public class WallpaperTranscoderTests
         Assert.Null(Decide(new VideoProbe("h264", 30, 3840, 1080), null).ScaleW);
     }
 
-    // ---------- ffprobe 解析 ----------
+    // ---------- `ffmpeg -i` stderr 解析（替代 ffprobe，省一半工具体积） ----------
 
-    [Fact]
-    public void ParseProbe_TypicalH264_60Fps()
+    [Fact] // 典型 h264 行：codec/尺寸/fps 全解析
+    public void ParseFfmpegProbe_TypicalH264()
     {
-        var p = WallpaperTranscoder.ParseProbe(
-            """{"streams":[{"codec_name":"h264","r_frame_rate":"60000/1001","width":3840,"height":1080}]}""");
+        var p = WallpaperTranscoder.ParseFfmpegProbe(
+            "  Stream #0:0[0x1]: Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 3840x1080 [SAR 1:1 DAR 32:9], 786 kb/s, 24 fps, 24 tbr, 24k tbn, 48k tbc");
         Assert.NotNull(p);
         Assert.Equal("h264", p.Codec);
         Assert.Equal(3840, p.Width);
-        Assert.Equal(59.94, p.Fps, 2);
+        Assert.Equal(1080, p.Height);
+        Assert.Equal(24, p.Fps, 0);
     }
 
-    [Fact]
-    public void ParseProbe_IntegerRate()
+    [Fact] // 小数帧率 + hevc
+    public void ParseFfmpegProbe_HevcFractionalFps()
     {
-        var p = WallpaperTranscoder.ParseProbe(
-            """{"streams":[{"codec_name":"hevc","r_frame_rate":"30/1","width":1920,"height":1080}]}""");
-        Assert.Equal(30, p.Fps, 0);
+        var p = WallpaperTranscoder.ParseFfmpegProbe(
+            "  Stream #0:0[0x1]: Video: hevc (Main 10) (hvc1 / 0x31766368), yuv420p10le, 1920x1080 [SAR 1:1 DAR 16:9], 2345 kb/s, 29.97 fps, 29.97 tbr, 30k tbn");
+        Assert.NotNull(p);
+        Assert.Equal("hevc", p.Codec);
+        Assert.Equal(29.97, p.Fps, 2);
     }
 
-    [Fact]
-    public void ParseProbe_InvalidJson_ReturnsNull()
+    [Fact] // fps 缺失回退 tbr
+    public void ParseFfmpegProbe_FallsBackToTbr()
     {
-        Assert.Null(WallpaperTranscoder.ParseProbe("not json"));
-        Assert.Null(WallpaperTranscoder.ParseProbe("""{"streams":[]}"""));
+        var p = WallpaperTranscoder.ParseFfmpegProbe(
+            "  Stream #0:1[0x1]: Video: mpeg4 (Simple Profile) (mp4v / 0x76333434), yuv420p, 640x480 [SAR 1:1 DAR 4:3], 800 kb/s, 25 tbr, 25k tbn");
+        Assert.NotNull(p);
+        Assert.Equal(25, p.Fps, 0);
     }
 
-    [Fact]
-    public void ParseRate_FractionAndPlain()
+    [Fact] // 完整 stderr（含音频行 + Input/Duration 等噪声行）
+    public void ParseFfmpegProbe_FullStderrSkipsAudioLine()
     {
-        Assert.Equal(29.97, WallpaperTranscoder.ParseRate("30000/1001"), 2);
-        Assert.Equal(25, WallpaperTranscoder.ParseRate("25"));
-        Assert.Equal(0, WallpaperTranscoder.ParseRate("0/0"));
+        var p = WallpaperTranscoder.ParseFfmpegProbe(
+            "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a.mp4':\r\n" +
+            "  Duration: 00:00:15.04, start: 0.000000, bitrate: 839 kb/s\r\n" +
+            "    Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 3840x1080, 786 kb/s, 24 fps\r\n" +
+            "    Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6D703461), 48000 Hz, stereo, fltp, 61 kb/s\r\n" +
+            "At least one output file must be specified\r\n");
+        Assert.NotNull(p);
+        Assert.Equal("h264", p.Codec);
+        Assert.Equal(3840, p.Width);
+    }
+
+    [Fact] // 无 Video 行 / 只有音频 → null
+    public void ParseFfmpegProbe_NoVideoLine_ReturnsNull()
+    {
+        Assert.Null(WallpaperTranscoder.ParseFfmpegProbe("At least one output file must be specified"));
+        Assert.Null(WallpaperTranscoder.ParseFfmpegProbe(
+            "  Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo\r\n"));
     }
 
     // ---------- 命令行构造 ----------
