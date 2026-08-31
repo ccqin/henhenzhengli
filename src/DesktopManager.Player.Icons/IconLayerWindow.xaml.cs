@@ -422,8 +422,22 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         sort.Items.Add(byName);
         sort.Items.Add(byType);
         menu.Items.Add(sort);
+
+        // 对齐图标：保持当前排列顺序，仅吸附到标准网格（歪斜归位，不重排）
+        var miAlign = new MenuItem { Header = "对齐图标" };
+        miAlign.Click += (_, _) => AlignLooseToGrid();
+        menu.Items.Add(miAlign);
         // 壁纸设置统一在托盘设置窗口（用户决策：桌面右键不再出现壁纸入口）。
         return menu;
+    }
+
+    /// <summary>散落图标吸附到标准网格：按当前位置行分桶+行内 X 序（保持用户排列，仅归位）。</summary>
+    private void AlignLooseToGrid()
+    {
+        double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
+        SortLooseOrdered(_looseIcons
+            .OrderBy(i => (int)Math.Round(i.Y / stepY))
+            .ThenBy(i => i.X));
     }
 
     /// <summary>原生桌面同款类别权重：此电脑(0) → 回收站(1) → 文件夹(2) → 文件(3)。</summary>
