@@ -431,13 +431,52 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         return menu;
     }
 
-    /// <summary>散落图标吸附到标准网格：按当前位置行分桶+行内 X 序（保持用户排列，仅归位）。</summary>
+    /// <summary>散落图标就近吸附对齐：每个图标归位到最近的格点，冲突时挪最近空格。
+    /// 按偏差升序落座——已在格位上的图标偏差为零最先锁定、纹丝不动；歪的图标就近归位。
+    /// （真机教训：此前复用排序重排，顺序由 X 坐标微差决定 → 全体连锁移位，与用户"对齐"预期相反）。</summary>
     private void AlignLooseToGrid()
     {
+        const double originX = 16, originY = 16;
+        double stepX = IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120;
         double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
-        SortLooseOrdered(_looseIcons
-            .OrderBy(i => (int)Math.Round(i.Y / stepY))
-            .ThenBy(i => i.X));
+        int maxRows = Math.Max(1, (int)((ActualHeight > 0 ? ActualHeight : SystemParameters.WorkArea.Height) - originY - 8) / (int)stepY);
+
+        var plans = _looseIcons
+            .Select(i =>
+            {
+                int col = Math.Max(0, (int)Math.Round((i.X - originX) / stepX));
+                int row = Math.Max(0, Math.Min(maxRows - 1, (int)Math.Round((i.Y - originY) / stepY)));
+                double dx = i.X - (originX + col * stepX), dy = i.Y - (originY + row * stepY);
+                return (Item: i, Col: col, Row: row, Dist: dx * dx + dy * dy);
+            })
+            .OrderBy(p => p.Dist)
+            .ToList();
+
+        var taken = new HashSet<(int Col, int Row)>();
+        foreach (var p in plans)
+        {
+            var cell = (p.Col, p.Row);
+            if (taken.Contains(cell)) cell = NearestFreeCell(p.Col, p.Row, taken, maxRows);
+            taken.Add(cell);
+            p.Item.X = originX + cell.Col * stepX;
+            p.Item.Y = originY + cell.Row * stepY;
+        }
+        RequestSave();
+    }
+
+    /// <summary>环形扩散找最近空格（列可无限向右扩，行受工作区限制）。</summary>
+    private static (int Col, int Row) NearestFreeCell(int col, int row, HashSet<(int Col, int Row)> taken, int maxRows)
+    {
+        for (int r = 1; ; r++)
+        {
+            for (int dc = -r; dc <= r; dc++)
+            for (int dr = -r; dr <= r; dr++)
+            {
+                if (Math.Max(Math.Abs(dc), Math.Abs(dr)) != r) continue; // 只扫当前环
+                int c = col + dc, w = row + dr;
+                if (c >= 0 && w >= 0 && w < maxRows && !taken.Contains((c, w))) return (c, w);
+            }
+        }
     }
 
     /// <summary>原生桌面同款类别权重：此电脑(0) → 回收站(1) → 文件夹(2) → 文件(3)。</summary>
