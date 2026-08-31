@@ -80,7 +80,12 @@ public sealed class MultiMonitorHost
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "DesktopManager", "transcode"));
         if (_transcoder.Available)
-            Log.Information("壁纸转码器就绪（ffmpeg + ffprobe 已找到，非 HEVC/高帧率壁纸将后台转码）");
+            Log.Information("壁纸转码器就绪（ffmpeg 已找到，非 HEVC/高帧率壁纸将后台转码）");
+        else
+            Log.Warning("壁纸转码器未就绪：BaseDirectory={Dir} 与 {UserTools} 下均未找到 ffmpeg.exe",
+                AppContext.BaseDirectory,
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "DesktopManager", "tools", "ffmpeg.exe"));
         _videoSync = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _videoSync.Tick += (_, _) => SyncGroupVideos();
         _videoSync.Start();

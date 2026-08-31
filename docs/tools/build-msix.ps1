@@ -45,6 +45,13 @@ Set-Content (Join-Path $layout "AppxManifest.xml") $manifest -Encoding UTF8
 # 5) 清理不需要进包的产物（pdb 可留可去——留便于诊断）
 Get-ChildItem $layout -Filter "*.pdb" | Remove-Item
 
+# 5.5) 清冗余：VLC 包 targets 带出的 .lib 导入库（C++ 场景才需要）+ SQLite 冗余架构 runtimes
+Remove-Item (Join-Path $layout "*.lib") -Force -ErrorAction SilentlyContinue
+foreach ($arch in @('win-x86', 'win-arm64')) {
+    $d = Join-Path $layout "runtimes\$arch"
+    if (Test-Path $d) { Remove-Item $d -Recurse -Force }
+}
+
 # 6) makeappx
 $makeappx = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin\*\x64\makeappx.exe"
 $makeappx = (Get-Item $makeappx | Sort-Object FullName -Descending | Select-Object -First 1).FullName
@@ -55,6 +62,18 @@ Write-Host "==> makeappx"
 $msixTmp = $msix + ".tmp"
 & $makeappx pack /d $layout /p $msixTmp /nv
 if ($LASTEXITCODE -ne 0) { throw "makeappx 失败" }
+# 完整性抽查（makeappx 无 verify 命令；真机踩坑：布局被中途改动的包能解包但部署丢文件）：
+# 解包后核对关键大文件存在且大小与 layout 一致
+$chk = Join-Path $artifacts "verify-check"
+if (Test-Path $chk) { Remove-Item $chk -Recurse -Force }
+& $makeappx unpack /p $msixTmp /d $chk /nv | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "makeappx unpack 校验失败" }
+foreach ($f in @('ffmpeg.exe', 'libvlc.dll', 'libvlccore.dll', 'DesktopManager.Player.Wallpaper.exe')) {
+    $a = Get-Item (Join-Path $layout $f) -ErrorAction SilentlyContinue
+    $b = Get-Item (Join-Path $chk $f) -ErrorAction SilentlyContinue
+    if (-not $a -or -not $b -or $a.Length -ne $b.Length) { throw "完整性抽查失败：$f（layout=$($a.Length) 包内=$($b.Length)）" }
+}
+Remove-Item $chk -Recurse -Force
 Move-Item $msixTmp $msix -Force
 
 # 7) 签名（可选）
