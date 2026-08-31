@@ -682,8 +682,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 bool occupied = false;
                 foreach (var existing in _looseIcons)
                 {
-                    // existing 以其 (X,Y) 为左上角占一个槽位大小的区域；矩形相交即占用
-                    if (existing.X < x + stepX && existing.X + stepX > x &&
+                    // X<0 = 排序流程的"离格中"哨兵，不占位——(-1,-1) 的包围盒恰好与第一格相交，
+                    // 不排除会把首个图标挤到第二格（真机：排序后左上角空一格）
+                    if (existing.X >= 0 &&
+                        existing.X < x + stepX && existing.X + stepX > x &&
                         existing.Y < y + stepY && existing.Y + stepY > y)
                     {
                         occupied = true;
