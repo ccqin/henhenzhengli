@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -119,6 +119,7 @@ public partial class SettingsWindow : Window
         if (ReferenceEquals(sender, NavAppearance)) PanelAppearance.LoadAppearanceUI();
         PanelMenu.Visibility = ReferenceEquals(sender, NavMenu) ? Visibility.Visible : Visibility.Collapsed;
         if (ReferenceEquals(sender, NavMenu)) PanelMenu.LoadMenuUI();
+        PanelAbout.Visibility = ReferenceEquals(sender, NavAbout) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ---------- 排列预览（只读） ----------

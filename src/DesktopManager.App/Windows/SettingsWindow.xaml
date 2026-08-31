@@ -263,6 +263,12 @@
                         <TextBlock Text="日志与操作" Margin="10,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
+                <RadioButton x:Name="NavAbout" Style="{StaticResource NavItem}" Checked="Nav_Checked">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE946;" Style="{StaticResource Glyph}"/>
+                        <TextBlock Text="关于与开源" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
             </StackPanel>
 
             <!-- 内容 -->
@@ -335,6 +341,32 @@
                 <panels:SettingsAppearancePanel x:Name="PanelAppearance" Visibility="Collapsed"/>
                 <panels:SettingsMenuPanel x:Name="PanelMenu" Visibility="Collapsed"/>
                 <panels:SettingsLogsPanel x:Name="PanelLogs" Visibility="Collapsed"/>
+
+                <!-- 页：关于与开源许可（ffmpeg GPL / LibVLC LGPL，商店审核要求应用内可查） -->
+                <ScrollViewer x:Name="PanelAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="16">
+                        <TextBlock Text="狠狠整理" FontSize="22" FontWeight="Bold"/>
+                        <TextBlock Text="桌面图标收纳与动态壁纸" Opacity="0.7" Margin="0,4,0,16"/>
+
+                        <TextBlock Text="开源组件声明" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock TextWrapping="Wrap" LineHeight="22" Opacity="0.9" xml:space="preserve">本应用包含以下开源组件，感谢它们的作者与社区：
+
+FFmpeg（https://ffmpeg.org）— 视频壁纸转码
+以 GPL-2.0-or-later 许可证分发，源码见 https://git.ffmpeg.org/ffmpeg.git。
+作为独立进程调用，其许可不作用于本应用其余部分。
+
+LibVLC / VLC（https://www.videolan.org）— 视频播放引擎
+以 LGPL-2.1-or-later 许可证分发（动态链接），源码见 https://code.videolan.org/videolan/vlc。
+
+LibVLCSharp（https://github.com/videolan/libvlcsharp）— MIT
+Serilog（https://serilog.net）— Apache-2.0
+H.NotifyIcon（https://github.com/HavenDV/H.NotifyIcon）— MIT
+Microsoft.Data.Sqlite — Apache-2.0</TextBlock>
+
+                        <TextBlock Text="隐私说明" FontSize="15" FontWeight="SemiBold" Margin="0,20,0,8"/>
+                        <TextBlock TextWrapping="Wrap" LineHeight="22" Opacity="0.9">本应用不联网、不上传任何数据。壁纸/图标配置与日志保存在本机 %APPDATA%\DesktopManager 目录。</TextBlock>
+                    </StackPanel>
+                </ScrollViewer>
 
                 <!-- 页 4：日志与操作 -->
             </Grid>
