@@ -46,10 +46,13 @@ public static class AutoStart
         catch { /* manifest 未声明扩展等 */ }
     }
 
+    // 注意：WinRT async 不能在 UI 线程直接 GetAwaiter().GetResult()——完成回调要回 UI 线程的
+    // SynchronizationContext 而它正阻塞 = 死锁（真机：MSIX 版打开设置窗口/托盘右键即卡死）。
+    // Task.Run 把等待挪到线程池（无 SyncContext）即可安全同步桥接。
     public static bool IsEnabled()
     {
         if (IsMsix())
-            return MsixGetAsync().GetAwaiter().GetResult() == true;
+            return Task.Run(MsixGetAsync).GetAwaiter().GetResult() == true;
         using var key = Registry.CurrentUser.OpenSubKey(KeyPath);
         return key?.GetValue(ValueName) is string v && v.Length > 0;
     }
@@ -58,7 +61,7 @@ public static class AutoStart
     {
         if (IsMsix())
         {
-            MsixSetAsync(enabled).GetAwaiter().GetResult();
+            Task.Run(() => MsixSetAsync(enabled)).GetAwaiter().GetResult();
             return;
         }
         using var key = Registry.CurrentUser.CreateSubKey(KeyPath);

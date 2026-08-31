@@ -33,6 +33,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Win32 版本资源：任务管理器/启动项/进程列表显示名（默认是 exe 文件名，真机反馈要求中文名） -->
+    <AssemblyTitle>狠狠整理</AssemblyTitle>
+    <Product>狠狠整理</Product>
+    <FileDescription>狠狠整理 — 桌面图标收纳与动态壁纸</FileDescription>
   </PropertyGroup>
 
 </Project>
