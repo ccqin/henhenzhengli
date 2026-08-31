@@ -609,7 +609,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     /// <summary>遍历 10 列网格（col=0..9, row=0..递增）找第一个不与现有 _looseIcons 重叠的 slot。
-    /// 重叠判定：与某现有图标 X 差 &lt;1 且 Y 差 &lt;1（同 slot）。槽位无限、图标有限 → 必终止。</summary>
+    /// 重叠判定：包围盒相交（图标占 stepX×stepY 区域）——此前用格点精确匹配，自由摆放的图标
+    /// 不在格点上 → 判不中 → 新图标全落 (16,16) 与已有重叠（真机：新装软件图标堆左上角）。</summary>
     private (double x, double y) FindFreeLooseSlot()
     {
         const double originX = 16, originY = 16;
@@ -628,7 +629,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 bool occupied = false;
                 foreach (var existing in _looseIcons)
                 {
-                    if (Math.Abs(existing.X - x) < 1 && Math.Abs(existing.Y - y) < 1)
+                    // existing 以其 (X,Y) 为左上角占一个槽位大小的区域；矩形相交即占用
+                    if (existing.X < x + stepX && existing.X + stepX > x &&
+                        existing.Y < y + stepY && existing.Y + stepY > y)
                     {
                         occupied = true;
                         break;

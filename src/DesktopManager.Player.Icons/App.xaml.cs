@@ -21,10 +21,13 @@ public partial class App : Application, ICrossScreenHost
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        // 子进程日志 → stderr（主进程统一转发进主日志/日志 db；此前 Serilog 未初始化，Log.* 全部静默）
+        // 子进程日志 → stderr（主进程统一转发进主日志/日志 db）。
+        // 关键：必须写 stderr 而非 stdout——stdout 是 IPC 消息通道，日志混入会打死通道读循环
+        // （真机：Console sink 默认 stdout → 移动"此电脑"触发一条日志 → 两屏 IPC 全失联 → 桌面假死黑屏）。
+        // Serilog.Sinks.Console 写 stderr 需要 encoder 参数，自定义极简 sink 最稳。
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
-            .WriteTo.Console()
+            .WriteTo.Sink(new StderrSink())
             .CreateLogger();
 
         // 可选软渲染（诊断开关）：默认硬件渲染（M5 顶层形态验证过）。
@@ -228,4 +231,12 @@ public partial class App : Application, ICrossScreenHost
             if (args[i] == name && int.TryParse(args[i + 1], out var v)) return v;
         return def;
     }
+}
+
+
+/// <summary>极简 stderr sink：子进程日志写标准错误流（stdout 是 IPC 通道，绝不可写）。</summary>
+internal sealed class StderrSink : Serilog.Core.ILogEventSink
+{
+    public void Emit(Serilog.Events.LogEvent e) =>
+        Console.Error.WriteLine("[" + e.Level + "] " + e.RenderMessage());
 }
