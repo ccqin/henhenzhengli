@@ -57,7 +57,12 @@ public sealed class ChildProcessManager : IDisposable
         _cts = new CancellationTokenSource();
         _ = Task.Run(() => _channel.RunAsync(
             m => MessageReceived?.Invoke(m),
-            err => Log.Debug("子进程 stderr[{Mon}]: {Err}", MonitorId, err),
+            err =>
+            {
+                // VLC 已知无害噪声（HEVC 时间戳转换，每循环回绕刷一屏）不入库——减少日志 db 噪声
+                if (err.Contains("Timestamp conversion failed") || err.Contains("Could not convert timestamp")) return;
+                Log.Debug("子进程 stderr[{Mon}]: {Err}", MonitorId, err);
+            },
             _cts.Token));
         Log.Information("子进程就绪：{Mon} exe={Exe} hwnd={Hwnd}", MonitorId, exePath, Hwnd);
         LogDb.Audit("process", "start", Path.GetFileName(exePath), MonitorId);

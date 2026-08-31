@@ -1,4 +1,4 @@
-# 本地侧加载部署一条龙：打包 → 签名 → 杀进程 → 卸旧 → 安装 → 启动 → 验证
+﻿# 本地侧加载部署一条龙：打包 → 签名 → 杀进程 → 卸旧 → 安装 → 启动 → 验证
 # 用法：powershell -ExecutionPolicy Bypass -File docs/tools/deploy-local.ps1 [-Version 1.0.3.0]
 #
 # 前置（一次性）：

@@ -427,18 +427,53 @@ public sealed class MultiMonitorHost
             if (string.IsNullOrWhiteSpace(g.WallpaperPath) || g.WallpaperKind != WallpaperKind.Video) continue;
             var members = g.MonitorIds.Where(_wallpaperPlayers.ContainsKey).ToList();
             if (members.Count < 2) continue;
-            if (!_videoPos.TryGetValue(members[0], out var master)) continue; // 基准未上报（暂停/非播放）跳过
+
+            // 循环回绕主动对齐：任一屏 position 骤降（回绕到片头）→ 其余屏立刻对齐到回绕屏。
+            // 短视频（如 15s）两屏回绕时刻天然错开，被动漂移校准会把画面 seek 得跳来跳去（真机）；
+            // 回绕点对齐让两屏在循环边界一次性归位，拼接画面无跳变。
+            string? wrapped = null;
+            double wrappedPos = 0;
+            foreach (var mon in members)
+            {
+                if (!_videoPos.TryGetValue(mon, out var pos)) continue;
+                if (_lastVideoPos.TryGetValue(mon, out var last) && last - pos > 3000 && pos < 2000)
+                {
+                    wrapped = mon;
+                    wrappedPos = pos;
+                    break;
+                }
+            }
+            if (wrapped is not null)
+            {
+                foreach (var mon in members)
+                {
+                    if (mon == wrapped) continue;
+                    _lastVideoPos[mon] = wrappedPos; // 更新基准防下轮误判
+                    _wallpaperPlayers[mon].Send(new SetVideoPosition { PositionMs = wrappedPos });
+                }
+                _lastVideoPos[wrapped] = wrappedPos;
+                Log.Information("视频循环回绕对齐：{Mon} 回绕 → 组内对齐 {Pos:F1}s", wrapped, wrappedPos / 1000);
+                continue;
+            }
+
+            // 常规漂移校准（播放中）：阈值放宽到 1.5s——小幅漂移肉眼不可察不 seek，
+            // 大漂移（暂停恢复后错位等）才校正，避免频繁 seek 引起画面跳动
+            if (!_videoPos.TryGetValue(members[0], out var master)) continue;
             foreach (var mon in members.Skip(1))
             {
                 if (!_videoPos.TryGetValue(mon, out var pos)) continue;
-                if (Math.Abs(pos - master) > 500)
+                if (Math.Abs(pos - master) > 1500)
                 {
                     _wallpaperPlayers[mon].Send(new SetVideoPosition { PositionMs = master });
                     Log.Information("视频同步校正：{Mon} 漂移={D:F1}s → 对齐基准", mon, Math.Abs(pos - master) / 1000);
                 }
             }
         }
+        // 快照本轮位置供下轮回绕检测
+        foreach (var (mon, pos) in _videoPos) _lastVideoPos[mon] = pos;
     }
+
+    private readonly Dictionary<string, double> _lastVideoPos = new(StringComparer.Ordinal); // 回绕检测：上轮位置快照
 
     private int? ScreenWidthOf(string monitorId) =>
         MonitorEnumerator.Enumerate().FirstOrDefault(m => m.PersistentId == monitorId)?.Width;
