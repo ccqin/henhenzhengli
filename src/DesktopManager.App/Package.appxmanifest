@@ -8,9 +8,9 @@
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
   IgnorableNamespaces="uap rescap desktop desktop4 desktop6">
 
-  <Identity Name="DesktopManager"
+  <Identity Name="qins.57884328A683A"
             Version="1.0.0.0"
-            Publisher="CN=DesktopManager Dev" />
+            Publisher="CN=00588731-3034-463D-B8FD-357AAFC3D4E4" />
 
   <Properties>
     <DisplayName>狠狠整理</DisplayName>
