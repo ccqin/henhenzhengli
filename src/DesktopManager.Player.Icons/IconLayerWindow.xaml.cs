@@ -684,7 +684,13 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         // 先 Remove 再 Add：count（网格排位依据）反映删除后的剩余项数，新项顺势补位。
         // toRemove 是 currentLoose（=_looseIcons）原实例引用，Remove 走引用相等命中。
         foreach (var rem in toRemove) _looseIcons.Remove(rem);
-        foreach (var add in toAdd) AddLooseIcon(add);
+        // 先放已定位项（X>0，config 存量坐标）再放待排位项（X<=0，新文件走 FindFreeLooseSlot）——
+        // 输入序=文件系统枚举序：若新文件先入，排位时存量尚未就位 → 新文件占首格，
+        // 存量随后按 config 坐标落位 → 重叠左上角（真机：退出期间新装软件，重启后叠加）
+        foreach (var add in toAdd)
+            if (add.X > 0 || add.Y > 0) AddLooseIcon(add);
+        foreach (var add in toAdd)
+            if (add.X <= 0 && add.Y <= 0) AddLooseIcon(add);
     }
 
     /// <summary>P0-T3：增量对账渲染（sync.Changed 用）。真正单条增量：Added→Add，Removed→Remove。
