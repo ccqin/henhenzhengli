@@ -2,7 +2,7 @@
 
 > 🏪 **已上架微软商店**：[狠狠整理](https://apps.microsoft.com/detail/9NQZ7KPDSZ01?hl=zh-cn&gl=US&ocid=pdpshare)
 
-Windows 桌面图标管理 + 动态壁纸结合体工具。接管 explorer 桌面图标显示，自绘图标层提供收纳盒/分组管理；壁纸层支持静态图与视频/GIF，支持多显示器与跨屏组合。目标以 MSIX + runFullTrust 形式上架微软商店。
+Windows 桌面图标管理 + 动态壁纸结合体工具。接管 explorer 桌面图标显示，自绘图标层提供收纳盒/分组管理；壁纸层支持静态图与视频/GIF，支持多显示器与跨屏组合。以 MSIX + runFullTrust 形式分发（微软商店已上架，见顶部链接）。
 
 **技术栈**：C# / WPF / .NET 10 / MSIX / xUnit / Win32 P/Invoke。
 
