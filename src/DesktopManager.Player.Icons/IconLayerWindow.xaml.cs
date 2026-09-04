@@ -111,6 +111,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     // DoDragDrop 期间若 sync 触发 reconcile 回收容器，path 已在 DoDragDrop 调用前 capture 为本地 string，拖拽不受影响。
     private IconItem? _draggedIcon;
     private Point _iconDragOrigin;     // arm 时鼠标位置（窗口坐标），超 MinimumDragDistance 才 DoDragDrop
+    private Point _iconDragOffset;     // 抓取偏移（鼠标相对图标左上角），Drop 保持——原生拖放手感
     private bool _iconDragArmed;       // 单击 arm；双击/松手/超阈值拖出 后清零（三守卫）
     // 右键菜单目标图标（Opening 前 PreviewMouseRightButtonDown hit-test 捕获，Click 复用四项逻辑）。
     private IconItem? _contextMenuIcon;
@@ -326,6 +327,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 if (_inputActive) return; // BeginInput 期间有意前台化（键盘输入），不压底
                 RequestReorder();
             };
+            // 桌面键入快速查找：低级键盘钩子观察（仅前台为桌面时响应；详见 InstallSearchHook）
+            InstallSearchHook();
+            Closed += (_, _) => _searchHook?.Dispose();
         };
 
         // P0-T2：散落图标集合驱动 LooseItemsControl（XAML 里 DataTemplate/ItemContainerStyle 已就绪）。
@@ -464,6 +468,38 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         RequestSave();
     }
 
+    /// <summary>槽位参数（间距随图标尺寸档）：多处网格逻辑共用。</summary>
+    private (double OriginX, double OriginY, double StepX, double StepY) GridMetrics()
+    {
+        const double ox = 16, oy = 16;
+        return (ox, oy, IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120,
+                       IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140);
+    }
+
+    /// <summary>拖放落点解析：保持抓取偏移后的目标位若无重叠直接用（自由摆放）；
+    /// 与现有图标重叠 → 吸附最近空格（原生"让位"手感，杜绝图标叠加——真机反馈）。</summary>
+    private (double X, double Y) ResolveDropPosition(IconItem self, double rawX, double rawY)
+    {
+        var (ox, oy, stepX, stepY) = GridMetrics();
+        bool overlaps = _looseIcons.Any(ex => ex != self && ex.X >= 0 &&
+            ex.X < rawX + stepX && ex.X + stepX > rawX &&
+            ex.Y < rawY + stepY && ex.Y + stepY > rawY);
+        if (!overlaps) return (rawX, rawY);
+
+        int maxRows = Math.Max(1, (int)((ActualHeight > 0 ? ActualHeight : SystemParameters.WorkArea.Height) - oy - 8) / (int)stepY);
+        var taken = new HashSet<(int Col, int Row)>();
+        foreach (var ex in _looseIcons)
+        {
+            if (ReferenceEquals(ex, self) || ex.X < 0) continue;
+            taken.Add((Math.Max(0, (int)Math.Round((ex.X - ox) / stepX)),
+                       Math.Max(0, (int)Math.Round((ex.Y - oy) / stepY))));
+        }
+        int col = Math.Max(0, (int)Math.Round((rawX - ox) / stepX));
+        int row = Math.Max(0, Math.Min(maxRows - 1, (int)Math.Round((rawY - oy) / stepY)));
+        var cell = taken.Contains((col, row)) ? NearestFreeCell(col, row, taken, maxRows) : (col, row);
+        return (ox + cell.Col * stepX, oy + cell.Row * stepY);
+    }
+
     /// <summary>环形扩散找最近空格（列可无限向右扩，行受工作区限制）。</summary>
     private static (int Col, int Row) NearestFreeCell(int col, int row, HashSet<(int Col, int Row)> taken, int maxRows)
     {
@@ -477,6 +513,77 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 if (c >= 0 && w >= 0 && w < maxRows && !taken.Contains((c, w))) return (c, w);
             }
         }
+    }
+
+    // ---------- 桌面键入快速查找（原生桌面同款：打字母选中匹配图标） ----------
+    // 图标层 NOACTIVATE 收不到键盘焦点 → 低级键盘钩子观察（永不拦截）；
+    // 仅前台是"桌面环境"（Progman/WorkerW/DefView）时响应——用户在别的应用打字不受任何影响。
+
+    private DesktopManager.Native.LowLevelKeyboardHook? _searchHook;
+    private string _searchBuffer = "";
+    private DateTime _lastSearchKey;
+    private string? _lastHitPath;   // 再按同键在多个匹配间循环
+
+    private void InstallSearchHook()
+    {
+        try
+        {
+            _searchHook = new DesktopManager.Native.LowLevelKeyboardHook((vk, down) =>
+            {
+                if (!down || !IsForegroundDesktop()) return;
+                Dispatcher.BeginInvoke(() => HandleSearchKey(vk));
+            });
+        }
+        catch { /* 钩子安装失败仅失去查找功能，不影响其余 */ }
+    }
+
+    /// <summary>前台是否桌面环境（只在"用户在桌面上"时响应打字；编辑框/其他应用打字不受影响）。</summary>
+    private static bool IsForegroundDesktop()
+    {
+        var fg = DesktopManager.Native.Win32.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        uint pid = 0;
+        DesktopManager.Native.Win32.GetWindowThreadProcessId(fg, out pid);
+        try
+        {
+            var name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName;
+            if (name != "explorer") return false;
+        }
+        catch { return false; }
+        var cls = new System.Text.StringBuilder(64);
+        DesktopManager.Native.Win32.GetClassName(fg, cls, 64);
+        string c = cls.ToString();
+        return c is "Progman" or "WorkerW" or "SHELLDLL_DefView";
+    }
+
+    /// <summary>键入处理：字母/数字进缓冲（1.2s 无输入重置），Backspace 退格，Esc 清除；
+    /// 前缀匹配 → 包含匹配 → 同键循环下一个匹配。</summary>
+    private void HandleSearchKey(int vk)
+    {
+        if (_inputActive) return; // 文本编辑中（改名框）不搜
+        char ch = (vk >= 0x41 && vk <= 0x5A) || (vk >= 0x30 && vk <= 0x39) ? (char)vk : '\0';
+        if (vk == 0x1B) { _searchBuffer = ""; _lastHitPath = null; return; }          // Esc
+        if (vk == 0x08) { _searchBuffer = _searchBuffer.Length > 1 ? _searchBuffer[..^1] : ""; _lastHitPath = null; } // Backspace
+        else if (ch != '\0')
+        {
+            if ((DateTime.Now - _lastSearchKey).TotalMilliseconds > 1200) { _searchBuffer = ""; _lastHitPath = null; }
+            _searchBuffer += char.ToLowerInvariant(ch);
+        }
+        else return;
+        _lastSearchKey = DateTime.Now;
+        if (_searchBuffer.Length == 0) return;
+
+        var matches = _looseIcons
+            .Where(i => i.DisplayName.StartsWith(_searchBuffer, StringComparison.OrdinalIgnoreCase))
+            .Concat(_looseIcons.Where(i => !i.DisplayName.StartsWith(_searchBuffer, StringComparison.OrdinalIgnoreCase)
+                                        && i.DisplayName.Contains(_searchBuffer, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (matches.Count == 0) return;
+        // 再按同前缀（单字符追加自身）：循环选择下一个匹配
+        int idx = _lastHitPath is null ? 0 : Math.Max(0, matches.FindIndex(m => m.FilePath == _lastHitPath));
+        var hit = matches[idx % matches.Count];
+        _lastHitPath = hit.FilePath;
+        SelectLoose(hit);
     }
 
     /// <summary>原生桌面同款类别权重：此电脑(0) → 回收站(1) → 文件夹(2) → 文件(3)。</summary>
@@ -929,7 +1036,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         if (e.Data.GetDataPresent("DMSelection") &&
             e.Data.GetData(DataFormats.FileDrop) is string[] selPaths)
         {
+            // 多选展开起点：保持抓取偏移（第一格在鼠标抓取点，非左上角）
             var pos0 = e.GetPosition(LooseItemsControl);
+            double startX = pos0.X - _iconDragOffset.X, startY = pos0.Y - _iconDragOffset.Y;
             double stepX = IconSize <= 32 ? 90 : IconSize <= 48 ? 100 : 120;
             double stepY = IconSize <= 32 ? 96 : IconSize <= 48 ? 116 : 140;
             int col = 0, row = 0;
@@ -938,8 +1047,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 var it = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, sp, StringComparison.OrdinalIgnoreCase));
                 if (it is not null)
                 {
-                    it.X = pos0.X + col * stepX;
-                    it.Y = pos0.Y + row * stepY;
+                    it.X = startX + col * stepX;
+                    it.Y = startY + row * stepY;
                     _iconPositions[sp] = (it.X, it.Y);
                 }
                 if (++col >= 10) { col = 0; row++; }
@@ -969,7 +1078,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             if (owner is not null)
             {
                 // Fence 图标拖出空白：记 _dropPosition，RemoveIcon 触发 OnFenceIconRemoved 用它回填（落到 Drop 位置）。
-                _dropPosition = pos;
+                // 保持抓取偏移 + 碰撞让位（与散落图标自由摆放同手感）
+                _dropPosition = ResolveDropPosition(null, pos.X - _iconDragOffset.X, pos.Y - _iconDragOffset.Y);
                 owner.RemoveIcon(path);
             }
             else
@@ -979,10 +1089,11 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 var loose = _looseIcons.FirstOrDefault(i => string.Equals(i.FilePath, path, StringComparison.OrdinalIgnoreCase));
                 if (loose is not null)
                 {
-                    loose.X = pos.X;
-                    loose.Y = pos.Y;
+                    var (nx, ny) = ResolveDropPosition(loose, pos.X - _iconDragOffset.X, pos.Y - _iconDragOffset.Y);
+                    loose.X = nx;
+                    loose.Y = ny;
                     // 同步内存缓存（保持与 _looseIcons 一致）：消除"用户拖到 B 后文件删+还原同路径 → AddLooseIcon 用陈旧缓存 A"边界。
-                    _iconPositions[path] = (pos.X, pos.Y);
+                    _iconPositions[path] = (nx, ny);
                     RequestSave();
                 }
                 else
@@ -1283,6 +1394,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         _iconDragArmed = true;
         _draggedIcon = icon; // R2：IconItem 数据引用，非 UI 容器
         _iconDragOrigin = e.GetPosition(this);
+        // 抓取偏移：鼠标在图标内的位置——Drop 时保持（按下点=抬起点，原生手感；非左上角对齐落点）
+        var p = e.GetPosition(LooseItemsControl);
+        _iconDragOffset = new Point(p.X - icon.X, p.Y - icon.Y);
         // B2 修：按在多选集（≥2）上 → 保留多选（拖动将带全组）；否则按原有单选逻辑。
         var pressed = SelectedIcons;
         if (!(pressed.Count >= 2 && pressed.Any(i => i.FilePath == icon.FilePath)))
