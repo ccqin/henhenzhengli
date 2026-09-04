@@ -17,21 +17,22 @@ $certThumbprint = "D6615751932F3543291779301B39E7D9AF72BFCC"   # Subject=CN=0058
 
 function Step($msg) { Write-Host ("==> " + $msg) -ForegroundColor Cyan }
 
-# 1) 打包（build-msix.ps1 内含 publish/清理/完整性抽查）
+# 1) 先杀干净——bin\Release（Debug）直跑的实例会锁住 publish 的输出 DLL（真机：打包卡在 MSB3026
+#    重试循环；杀进程必须在打包前，而非安装前）
+Step "停止现有实例（释放 bin 目录锁）"
+Get-Process DesktopManager* -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep 2
+
+# 2) 打包（build-msix.ps1 内含 publish/清理/完整性抽查）
 Step "打包 $Version"
 & (Join-Path $PSScriptRoot "build-msix.ps1") -Version $Version
 $msix = Join-Path $artifacts "DesktopManager_${Version}_x64.msix"
 
-# 2) 签名（清单 Publisher=CN=00588731-...，必须同 Subject 证书；Start-Process 方式取真实退出码）
+# 3) 签名（清单 Publisher=CN=00588731-...，必须同 Subject 证书；Start-Process 方式取真实退出码）
 Step "签名"
 $signtool = (Get-Item (Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin\*\x64\signtool.exe") | Sort-Object FullName -Descending | Select-Object -First 1).FullName
 $p = Start-Process $signtool -ArgumentList @('sign','/fd','SHA256','/sha1',$certThumbprint,$msix) -Wait -PassThru -NoNewWindow
 if ($p.ExitCode -ne 0) { throw "signtool 失败 exit=$($p.ExitCode)（证书在 CurrentUser\My？指纹过期？）" }
-
-# 3) 杀干净（运行中会阻止 MSIX 卸载/升级——静默失败的根源）
-Step "停止现有实例"
-Get-Process DesktopManager* -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep 2
 
 # 4) 卸旧 + 装
 Step "卸载旧版并安装"

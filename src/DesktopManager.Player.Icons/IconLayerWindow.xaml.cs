@@ -459,7 +459,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var taken = new HashSet<(int Col, int Row)>();
         foreach (var p in plans)
         {
-            var cell = (p.Col, p.Row);
+            var cell = (Col: p.Col, Row: p.Row);
             if (taken.Contains(cell)) cell = NearestFreeCell(p.Col, p.Row, taken, maxRows);
             taken.Add(cell);
             p.Item.X = originX + cell.Col * stepX;
@@ -496,7 +496,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         }
         int col = Math.Max(0, (int)Math.Round((rawX - ox) / stepX));
         int row = Math.Max(0, Math.Min(maxRows - 1, (int)Math.Round((rawY - oy) / stepY)));
-        var cell = taken.Contains((col, row)) ? NearestFreeCell(col, row, taken, maxRows) : (col, row);
+        var cell = taken.Contains((col, row)) ? NearestFreeCell(col, row, taken, maxRows) : (Col: col, Row: row);
         return (ox + cell.Col * stepX, oy + cell.Row * stepY);
     }
 
@@ -1079,7 +1079,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             {
                 // Fence 图标拖出空白：记 _dropPosition，RemoveIcon 触发 OnFenceIconRemoved 用它回填（落到 Drop 位置）。
                 // 保持抓取偏移 + 碰撞让位（与散落图标自由摆放同手感）
-                _dropPosition = ResolveDropPosition(null, pos.X - _iconDragOffset.X, pos.Y - _iconDragOffset.Y);
+                var (rx, ry) = ResolveDropPosition(null!, pos.X - _iconDragOffset.X, pos.Y - _iconDragOffset.Y);
+                _dropPosition = new Point(rx, ry);
                 owner.RemoveIcon(path);
             }
             else

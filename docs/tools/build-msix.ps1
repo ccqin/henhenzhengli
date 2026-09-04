@@ -20,9 +20,12 @@ $layout = Join-Path $artifacts "msix-layout"
 
 # 1) Release 发布（self-contained false，依赖框架；三 exe 都会进输出）
 Write-Host "==> dotnet publish (Release)"
+# 编译 warning 走 stderr，PS5.1 的 Stop 偏好会把它当错误中断脚本（全量构建必现）→ publish 期间降为 Continue
+$ErrorActionPreference = "Continue"
 dotnet publish (Join-Path $root "src\DesktopManager.App\DesktopManager.App.csproj") `
     -c Release -o $layout --nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "publish 失败" }
+$ErrorActionPreference = "Stop"
 # MSBuild build-server 节点驻留会持有 stdout 管道 → 脚本在 CI/后台挂起（真机踩坑 ×2）
 dotnet build-server shutdown | Out-Null
 
