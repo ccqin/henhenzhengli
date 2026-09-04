@@ -17,9 +17,22 @@ Windows 桌面图标管理 + 动态壁纸结合体工具。接管 explorer 桌�
 | M4 壁纸层（单屏×每屏） | ✅ 完成（双屏真机验收通过） | `m4-wallpaper` |
 | M5 跨屏壁纸（显示组）+ 设置窗口 | ✅ 完成（双屏真机验收；拓扑应用本机受限已降级） | `m5-crossscreen` |
 | M6 子进程架构重构（壁纸/图标层独立进程 + Owner 免疫 Win+D） | ✅ 完成（真机验收通过） | `m6-childprocess` |
-| M7 商店化 | 📋 路线图 | — |
+| M7 商店化 | ✅ **已上架**（[商店链接](https://apps.microsoft.com/detail/9NQZ7KPDSZ01?hl=zh-cn&gl=US&ocid=pdpshare)；v1.0.10.0） | — |
+| M8 插件系统（桌面宠物 / 桌面小组件 / 壁纸源 / 自动化规则） | 📋 设计中 | — |
 
-详见 `docs/superpowers/plans/`。
+详见 `docs/superpowers/plans/` 与 `docs/CHANGELOG.md`。
+
+## 路线图：插件系统（M8）
+
+在既有"主进程 + 桌面层子进程"架构上开放**插件位**：插件以独立进程运行（同壁纸/图标层契约：
+stdin/stdout JSON IPC + `ready{hwnd}` + 挂桌面层 Z 序），渲染在**壁纸之上、图标之下**（可选图标之上）。
+规划中的插件类型：
+
+- **内容渲染类**：桌面宠物（走动/互动/喂食）、时钟/天气/系统监控 HUD、便签待办、氛围特效（雨雪樱花）、音频可视化
+- **壁纸源类**：Bing 每日一图、Unsplash/Pexels 随机、本地文件夹定时轮换
+- **自动化规则类**：按类型/日期自动归盒、番茄钟、快捷启动器
+
+设计文档见 `docs/plans/`（随实施推进补充）。
 
 ## 环境要求
 
