@@ -1358,10 +1358,59 @@ public partial class IconLayerWindow : Window, IInteractiveHost
             });
             OpenReported?.Invoke(path, null);
         }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1155) // ERROR_NO_ASSOCIATION
+        {
+            // 无默认打开方式 → 弹系统"打开方式"对话框（可顺带设置默认，原生桌面同款）
+            ShowOpenWithDialog(path);
+            OpenReported?.Invoke(path, null);
+        }
         catch (Exception ex)
         {
             OpenReported?.Invoke(path, ex.Message); // M6：失败必须可见（曾静默吞掉）
         }
+    }
+
+    /// <summary>SHOpenWithDialog：系统"你要如何打开这个文件"对话框（OAIF_EXEC 选中即打开，
+    /// OAIF_ALLOW_REGISTRATION 允许设为默认——用户选一次以后双击直达）。</summary>
+    private static void ShowOpenWithDialog(string path)
+    {
+        try
+        {
+            var info = new OPENASINFO
+            {
+                pcszFile = path,
+                pcszClass = "",
+                oaifInFlags = OpenAsInfoFlags.OAIF_ALLOW_REGISTRATION | OpenAsInfoFlags.OAIF_EXEC,
+            };
+            SHOpenWithDialog(IntPtr.Zero, ref info);
+        }
+        catch (Exception ex)
+        {
+            OpenReported?.Invoke(path, "打开方式对话框失败: " + ex.Message);
+        }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHOpenWithDialog(IntPtr hwndParent, ref OPENASINFO poainfo);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct OPENASINFO
+    {
+        public string pcszFile;
+        public string pcszClass;
+        public OpenAsInfoFlags oaifInFlags;
+    }
+
+    [Flags]
+    private enum OpenAsInfoFlags
+    {
+        OAIF_ALLOW_REGISTRATION = 0x0001,
+        OAIF_REGISTER_EXT = 0x0002,
+        OAIF_EXEC = 0x0004,               // 选定后立即执行打开
+        OAIF_FORCE_REGISTRATION = 0x0008,
+        OAIF_HIDE_REGISTRATION = 0x0020,
+        OAIF_URL_PROTOCOL = 0x0040,
+        OAIF_FILE_IS_URI = 0x0080,
     }
 
     // ---------- P0-T2：散落图标拖拽（R2/R3 三守卫，Layouter 数据引用模式）+ 右键 ----------
