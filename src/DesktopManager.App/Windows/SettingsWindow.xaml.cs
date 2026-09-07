@@ -66,6 +66,7 @@ public partial class SettingsWindow : Window
         _groups = host.Groups.ToList();
         PanelAppearance.Host = host;
         PanelMenu.Host = host;
+        PanelPlugins.Host = host;
         var v = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version;
         VersionText.Text = v is null ? "" : $"v{v.Major}.{v.Minor}.{v.Build}";
         RefreshMonitors();

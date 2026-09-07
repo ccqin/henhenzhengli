@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Controls;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using DesktopManager.Ipc;
@@ -48,33 +49,37 @@ public partial class App : Application
             StartStdinLoop();
         };
         _window.Show();
-        _ = Task.Run(DriftLoop);
+        DriftLoop();
     }
 
-    /// <summary>漂移方块渲染：主屏中 100x100 方块随机走动（验证桌面层挂载/重排后仍可见）。</summary>
-    private async Task DriftLoop()
+    /// <summary>漂移方块渲染：主屏中 100x100 方块随机走动（验证桌面层挂载/重排后仍可见）。
+    /// 注意：DispatcherTimer 必须在 UI 线程创建（后台线程的 Dispatcher 不泵消息，Tick 永不触发——真机教训）。</summary>
+    private void DriftLoop()
     {
-        var rect = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(160, 0, 174, 255)), Width = 100, Height = 100 };
-        double x = 200, y = 200, dx = 60, dy = 40; // 像素/秒
-        var last = DateTime.UtcNow;
-        await Dispatcher.InvokeAsync(() => _window!.Content = rect);
-        var timer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        timer.Tick += (_, _) =>
+        Dispatcher.BeginInvoke(() =>
         {
-            var now = DateTime.UtcNow;
-            var dt = (now - last).TotalSeconds; last = now;
-            var area = _lastKnownMonitor;
-            if (area is { } a)
+            var rect = new Rectangle { Fill = new SolidColorBrush(Color.FromArgb(160, 0, 174, 255)), Width = 100, Height = 100 };
+            var canvas = new Canvas();
+            canvas.Children.Add(rect);
+            _window!.Content = canvas;
+            double x = 200, y = 200, dx = 60, dy = 40; // 像素/秒
+            var last = DateTime.UtcNow;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            timer.Tick += (_, _) =>
             {
-                x += dx * dt; y += dy * dt;
-                if (x < a.Left || x + 100 > a.Right) { dx = -dx; x = Math.Clamp(x, a.Left, a.Right - 100); }
-                if (y < a.Top || y + 100 > a.Bottom) { dy = -dy; y = Math.Clamp(y, a.Top, a.Bottom - 100); }
-                Canvas.SetLeft(rect, x - a.Left);
-                Canvas.SetTop(rect, y - a.Top);
-            }
-        };
-        timer.Start();
-        await Task.CompletedTask;
+                var now = DateTime.UtcNow;
+                var dt = (now - last).TotalSeconds; last = now;
+                if (_lastKnownMonitor is { } a)
+                {
+                    x += dx * dt; y += dy * dt;
+                    if (x < a.Left || x + 100 > a.Right) { dx = -dx; x = Math.Clamp(x, a.Left, a.Right - 100); }
+                    if (y < a.Top || y + 100 > a.Bottom) { dy = -dy; y = Math.Clamp(y, a.Top, a.Bottom - 100); }
+                    Canvas.SetLeft(rect, x - a.Left);
+                    Canvas.SetTop(rect, y - a.Top);
+                }
+            };
+            timer.Start();
+        });
     }
 
     private void StartStdinLoop()
