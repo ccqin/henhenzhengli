@@ -60,7 +60,9 @@ public sealed class MultiMonitorHost
     private readonly Services.PersistenceService _persistence;
 
     // 跨屏迁移中转的 pending 槽（用户操作低频，单槽 + 后到覆盖足够）。
-    private (string TargetMonitor, string? Path, string? FenceId, double X, double Y)? _pendingImport;
+    // 跨屏迁移队列（原单槽：批量多选跨屏时后到覆盖前者，先到的 Export 回来 Path 不匹配被丢弃
+    // = 图标从两屏消失。改队列按 Path/FenceId 匹配出队，支持批量）
+    private readonly Queue<(string TargetMonitor, string? Path, string? FenceId, double X, double Y)> _pendingImports = new();
 
     /// <summary>主屏持久 ID（新图标缺省归属）。</summary>
     public string? PrimaryMonitorId { get; private set; }
@@ -377,7 +379,7 @@ public sealed class MultiMonitorHost
                 var owner = FindOwnerMonitor(req.Path);
                 if (owner is null || owner == req.TargetMonitorId) break;
                 Services.LogDb.Audit("icon", "cross-screen", req.Path, req.TargetMonitorId);
-                _pendingImport = (req.TargetMonitorId, req.Path, null, req.X, req.Y);
+                _pendingImports.Enqueue((req.TargetMonitorId, req.Path, null, req.X, req.Y));
                 _iconChildren[owner].Player.Send(new ExportIcon { Path = req.Path });
                 break;
 
@@ -385,22 +387,32 @@ public sealed class MultiMonitorHost
                 var fenceOwner = _iconChildren.FirstOrDefault(kv => kv.Value.ContainsFence(req.FenceId));
                 if (fenceOwner.Key is null || fenceOwner.Key == req.TargetMonitorId) break;
                 Services.LogDb.Audit("fence", "cross-screen", req.FenceId, req.TargetMonitorId);
-                _pendingImport = (req.TargetMonitorId, null, req.FenceId, req.X, req.Y);
+                _pendingImports.Enqueue((req.TargetMonitorId, null, req.FenceId, req.X, req.Y));
                 fenceOwner.Value.Player.Send(new ExportFence { FenceId = req.FenceId });
                 break;
 
             case ExportIconData data:
-                if (!data.Found || _pendingImport is not { } pi || pi.Path != data.Path) break;
+                if (!data.Found) break;
+                var arr = _pendingImports.ToArray();
+                var piIdx = -1; (string TargetMonitor, string? Path, string? FenceId, double X, double Y) pi = default;
+                for (int i = 0; i < arr.Length; i++)
+                    if (arr[i].Path == data.Path) { pi = arr[i]; piIdx = i; break; }
+                if (piIdx < 0) break;
+                DequeueAt(piIdx);
                 if (_iconChildren.TryGetValue(pi.TargetMonitor, out var target1))
                     target1.Player.Send(new ImportIcon { Path = data.Path, Name = data.Name, X = pi.X, Y = pi.Y });
-                _pendingImport = null;
                 break;
 
             case ExportFenceData data:
-                if (!data.Found || data.Fence is null || _pendingImport is not { } pf || pf.FenceId != data.Fence.Id) break;
+                if (!data.Found || data.Fence is null) break;
+                var arr2 = _pendingImports.ToArray();
+                var pfIdx = -1; (string TargetMonitor, string? Path, string? FenceId, double X, double Y) pf = default;
+                for (int i = 0; i < arr2.Length; i++)
+                    if (arr2[i].FenceId == data.Fence.Id) { pf = arr2[i]; pfIdx = i; break; }
+                if (pfIdx < 0) break;
+                DequeueAt(pfIdx);
                 if (_iconChildren.TryGetValue(pf.TargetMonitor, out var target2))
                     target2.Player.Send(new ImportFence { Fence = data.Fence, X = pf.X, Y = pf.Y });
-                _pendingImport = null;
                 break;
 
             case IconOpened io:
@@ -411,6 +423,15 @@ public sealed class MultiMonitorHost
                 Log.Warning("图标层子进程错误[{Mon}]：{Msg}", monitorId, err.Message);
                 break;
         }
+    }
+
+    /// <summary>队列按索引出队（Queue 无按索引删除，重建；批量小无所谓）。</summary>
+    private void DequeueAt(int index)
+    {
+        var rebuilt = _pendingImports.ToArray();
+        _pendingImports.Clear();
+        for (int i = 0; i < rebuilt.Length; i++)
+            if (i != index) _pendingImports.Enqueue(rebuilt[i]);
     }
 
     private string? FindOwnerMonitor(string path)

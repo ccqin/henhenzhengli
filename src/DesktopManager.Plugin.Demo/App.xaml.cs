@@ -17,6 +17,7 @@ public partial class App : Application
     private Window? _window;
     private CancellationTokenSource? _cts;
     private Rect? _lastKnownMonitor;
+    private List<Rect> _allMonitors = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -107,12 +108,16 @@ public partial class App : Application
         switch (msg)
         {
             case MonitorsInfo mi when mi.Monitors.Count > 0:
-                var prim = mi.Monitors.FirstOrDefault(m => m.IsPrimary) ?? mi.Monitors[0];
-                _lastKnownMonitor = new Rect(prim.X, prim.Y, prim.W, prim.H);
+                // 漂移域 = 全部屏并集（虚拟桌面）——方块可跨屏移动；窗口本身由宿主挂全虚拟桌面
+                var u = mi.Monitors[0];
+                _allMonitors = mi.Monitors.Select(m => new Rect(m.X, m.Y, m.W, m.H)).ToList();
+                foreach (var m in mi.Monitors.Skip(1))
+                    u = Rect.Union(u, new Rect(m.X, m.Y, m.W, m.H));
+                _lastKnownMonitor = u;
                 Dispatcher.BeginInvoke(() =>
                 {
-                    _window!.Left = prim.X; _window!.Top = prim.Y;
-                    _window!.Width = prim.W; _window!.Height = prim.H;
+                    _window!.Left = u.Left; _window!.Top = u.Top;
+                    _window!.Width = u.Width; _window!.Height = u.Height - 2; // 底缝防任务栏全屏检测
                 });
                 break;
 

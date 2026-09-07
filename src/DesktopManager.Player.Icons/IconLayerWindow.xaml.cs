@@ -1057,6 +1057,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                     it.Y = startY + row * stepY;
                     _iconPositions[sp] = (it.X, it.Y);
                 }
+                else
+                {
+                    // 跨屏批量：本屏没有的 path = 从源屏拖来整组——逐条经主进程迁移到本屏，
+                    // 按网格展开位置保持相对排列（宿主 _pendingImports 队列支持批量乱序）
+                    Host?.TransferLoose(sp, new Point(startX + col * stepX, startY + row * stepY));
+                }
                 if (++col >= 10) { col = 0; row++; }
             }
             RequestSave();

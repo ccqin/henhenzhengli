@@ -120,8 +120,9 @@ internal sealed class PluginManager : IDisposable
             // 全虚拟桌面尺寸（插件可跨屏走动；宿主不限定工作区）
             var vs = SystemParameters.VirtualScreenLeft;
             var vsTop = SystemParameters.VirtualScreenTop;
+            // 底部 2px 缝（壁纸同款真机教训）：顶层全屏无边框窗触发 shell 全屏检测 → 任务栏自动隐藏
             DesktopLayerHost.AttachToDesktop(hwnd, (int)vs, (int)vsTop,
-                (int)SystemParameters.VirtualScreenWidth, (int)SystemParameters.VirtualScreenHeight,
+                (int)SystemParameters.VirtualScreenWidth, (int)SystemParameters.VirtualScreenHeight - 2,
                 iconLayer: !m.ClickThrough);
             _running[m.Id] = new PluginRuntime { Manifest = m, Player = player, BuiltIn = IsBuiltIn(m) };
             player.Send(new Show());
