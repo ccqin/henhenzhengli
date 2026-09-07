@@ -120,6 +120,8 @@ public partial class SettingsWindow : Window
         PanelMenu.Visibility = ReferenceEquals(sender, NavMenu) ? Visibility.Visible : Visibility.Collapsed;
         if (ReferenceEquals(sender, NavMenu)) PanelMenu.LoadMenuUI();
         PanelAbout.Visibility = ReferenceEquals(sender, NavAbout) ? Visibility.Visible : Visibility.Collapsed;
+        PanelPlugins.Visibility = ReferenceEquals(sender, NavPlugins) ? Visibility.Visible : Visibility.Collapsed;
+        if (ReferenceEquals(sender, NavPlugins)) PanelPlugins.LoadPluginsUI();
     }
 
     // ---------- 排列预览（只读） ----------

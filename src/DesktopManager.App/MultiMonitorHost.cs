@@ -70,6 +70,9 @@ public sealed class MultiMonitorHost
     private readonly Dictionary<string, double> _videoPos = new(StringComparer.Ordinal); // monitorId → 最新位置 ms
     // GPU 第三梯队·预处理：视频壁纸后台转 HEVC@≤30fps 缓存（解码负载减半），完成自动切换。
     private readonly WallpaperTranscoder _transcoder;
+    // M8 插件宿主 + 配置（config.Plugins 的运行时镜像；写经 Mutator 回流聚合快照）
+    private readonly Services.PluginManager _plugins;
+    private DesktopManager.Core.Services.PluginConfigState _pluginConfig = new();
 
     public MultiMonitorHost(IConfigStore store)
     {
@@ -79,6 +82,23 @@ public sealed class MultiMonitorHost
             AppContext.BaseDirectory,
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "DesktopManager", "transcode"));
+        _plugins = new Services.PluginManager(() => _pluginConfig, () => _persistence.SaveImmediately());
+        _plugins.ConfigMutator = (id, k, v) =>
+        {
+            var cfgs = new Dictionary<string, Dictionary<string, string>>(_pluginConfig.Configs, StringComparer.Ordinal);
+            if (!cfgs.TryGetValue(id, out var cfg)) cfgs[id] = cfg = new(StringComparer.Ordinal);
+            else { cfg = new Dictionary<string, string>(cfg, StringComparer.Ordinal); cfgs[id] = cfg; }
+            cfg[k] = v;
+            _pluginConfig = _pluginConfig with { Configs = cfgs };
+        };
+        _plugins.EnabledMutator = (id, on) =>
+        {
+            var list = new List<string>(_pluginConfig.Enabled);
+            if (on && !list.Contains(id)) list.Add(id);
+            if (!on) list.RemoveAll(x => x == id);
+            _pluginConfig = _pluginConfig with { Enabled = list };
+        };
+        _plugins.QueryIconLayerHwnd = () => (IntPtr)(_iconChildren.Values.FirstOrDefault()?.Player.Hwnd ?? 0);
         if (_transcoder.Available)
             Log.Information("壁纸转码器就绪（ffmpeg 已找到，非 HEVC/高帧率壁纸将后台转码）");
         else
@@ -119,6 +139,7 @@ public sealed class MultiMonitorHost
             throw new InvalidOperationException("未枚举到任何显示器，无法创建图标层");
 
         _wallpapers.AddRange(config.Wallpapers);
+        _pluginConfig = config.Plugins ?? new DesktopManager.Core.Services.PluginConfigState();
         _displayGroups = config.DisplayGroups.ToList();
         _appearance = config.Appearance;
         _menu = config.Menu;
@@ -171,6 +192,13 @@ public sealed class MultiMonitorHost
             _orphanPaths.Add(p.FilePath);
         }
 
+        // M8：子进程就绪后启动插件（图标层就位才有 Z 序锚点）；每次 AttachCore 幂等（已运行的不重复启动）
+        try
+        {
+            _plugins.Discover();
+            _plugins.StartEnabled();
+        }
+        catch (Exception ex) { Log.Warning(ex, "插件启动阶段失败（不影响主功能）"); }
         Log.Information("MultiMonitorHost(M6)：{Count} 屏子进程就绪（{Monitors}），孤儿 Fence={OF} 位置={OP}",
             _iconChildren.Count, string.Join(", ", monitors.Select(m => m.PersistentId)),
             _orphanFences.Count, _orphanPositions.Count);
@@ -331,6 +359,7 @@ public sealed class MultiMonitorHost
                 // 图标层输入态结束/意外激活后 Z 序须压回桌面层：本进程 BottomPair 配对
                 // （图标层置底 + 壁纸插其下）。消息不区分屏（多屏图标层共享静态事件），全屏重排幂等。
                 foreach (var mon in _iconChildren.Keys.ToList()) BottomPair(mon);
+                _plugins.ReorderZ();
                 break;
 
             case IconAction ia:
@@ -496,15 +525,41 @@ public sealed class MultiMonitorHost
         });
     }
 
-    /// <summary>Governor 暂停所有壁纸播放（IPC）。</summary>
+    /// <summary>M8：插件页视图（发现列表 + 运行状态 + 启用态）。</summary>
+    public IReadOnlyList<Windows.SettingsPanels.PluginRow> GetPluginsView() =>
+        _plugins.Discovered.Select(m => new Windows.SettingsPanels.PluginRow
+        {
+            Id = m.Id,
+            Name = m.Name,
+            Version = "v" + m.Version,
+            Source = _plugins.Running.TryGetValue(m.Id, out var rt) && rt.BuiltIn ? "内置" : "用户",
+            Status = _plugins.Running.ContainsKey(m.Id) ? "运行中" : "已停止",
+            Enabled = _plugins.Running.ContainsKey(m.Id),
+        }).ToList();
+
+    /// <summary>M8：设置页开关 → 启停插件 + 持久化。</summary>
+    public void SetPluginEnabled(string id, bool enabled)
+    {
+        var m = _plugins.Discovered.FirstOrDefault(x => x.Id == id);
+        if (m is null) return;
+        if (enabled) _plugins.Start(m); else _plugins.Stop(id);
+        _plugins.SetEnabled(id, enabled);
+    }
+
+    /// <summary>暴露插件宿主（设置窗口等）。</summary>
+    internal Services.PluginManager Plugins => _plugins;
+
+    /// <summary>Governor 暂停所有壁纸播放（IPC）+ 通知插件（M8）。</summary>
     public void PauseAllWallpapers()
     {
+        _plugins.BroadcastPause(true);
         foreach (var p in _wallpaperPlayers.Values) p.Send(new Pause());
     }
 
-    /// <summary>Governor 恢复所有壁纸播放（IPC）。</summary>
+    /// <summary>Governor 恢复所有壁纸播放（IPC）+ 通知插件（M8）。</summary>
     public void ResumeAllWallpapers()
     {
+        _plugins.BroadcastPause(false);
         foreach (var p in _wallpaperPlayers.Values) p.Send(new Resume());
     }
 
@@ -786,6 +841,7 @@ public sealed class MultiMonitorHost
             DisplayGroups = _displayGroups.ToList(),
             Appearance = _appearance,
             Menu = _menu,
+            Plugins = _pluginConfig,
             AutoStart = DesktopManager.Native.AutoStart.IsEnabled(),
         };
     }
@@ -802,6 +858,7 @@ public sealed class MultiMonitorHost
         _wallpaperPlayers.Clear();
         _videoSync?.Stop();
         _transcoder.Dispose(); // 终止在途转码子进程
+        _plugins.Dispose();
     }
 
     // ---------- DTO 映射 ----------

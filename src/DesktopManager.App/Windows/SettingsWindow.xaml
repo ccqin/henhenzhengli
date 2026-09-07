@@ -269,6 +269,12 @@
                         <TextBlock Text="关于与开源" Margin="10,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </RadioButton>
+                <RadioButton x:Name="NavPlugins" Style="{StaticResource NavItem}" Checked="Nav_Checked">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE735;" Style="{StaticResource Glyph}"/>
+                        <TextBlock Text="插件" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </RadioButton>
             </StackPanel>
 
             <!-- 内容 -->
@@ -341,6 +347,7 @@
                 <panels:SettingsAppearancePanel x:Name="PanelAppearance" Visibility="Collapsed"/>
                 <panels:SettingsMenuPanel x:Name="PanelMenu" Visibility="Collapsed"/>
                 <panels:SettingsLogsPanel x:Name="PanelLogs" Visibility="Collapsed"/>
+                <panels:SettingsPluginsPanel x:Name="PanelPlugins" Visibility="Collapsed"/>
 
                 <!-- 页：关于与开源许可（ffmpeg GPL / LibVLC LGPL，商店审核要求应用内可查） -->
                 <ScrollViewer x:Name="PanelAbout" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">

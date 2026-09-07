@@ -35,4 +35,7 @@
 
 ## 待发布（下次"更新版本"时打包）
 
-（暂无——新改动记录在此，格式：日期 + 类型 + 一句话描述）
+- 2026-09-04 feat(M8-T1)：插件系统宿主框架——PluginManager（发现/生命周期/Z 序/配置代存）、
+  插件 IPC 协议（Hello/Monitors/Config/Error，7 条新消息）、config.json Plugins 节、
+  设置窗口「插件」页（启停开关）、Demo 空壳插件（漂移方块，验证全链路）；
+  单测 +4（清单解析：合法/坏 id/entry 越权/缺 name）

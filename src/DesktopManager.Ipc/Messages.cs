@@ -14,6 +14,13 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(ExportFenceData), "exportFenceData")]
 [JsonDerivedType(typeof(ClearSelectionExcept), "clearSelectionExcept")]
 [JsonDerivedType(typeof(RequestReorder), "requestReorder")]
+[JsonDerivedType(typeof(PluginHello), "pluginHello")]
+[JsonDerivedType(typeof(MonitorsReq), "monitorsReq")]
+[JsonDerivedType(typeof(MonitorsInfo), "monitorsInfo")]
+[JsonDerivedType(typeof(PluginConfigGet), "pluginConfigGet")]
+[JsonDerivedType(typeof(PluginConfigValue), "pluginConfigValue")]
+[JsonDerivedType(typeof(PluginConfigSet), "pluginConfigSet")]
+[JsonDerivedType(typeof(PluginError), "pluginError")]
 [JsonDerivedType(typeof(FenceAction), "fenceAction")]
 [JsonDerivedType(typeof(IconAction), "iconAction")]
 [JsonDerivedType(typeof(SetWallpaper), "setWallpaper")]
@@ -111,6 +118,60 @@ public sealed record ClearSelectionExcept : IpcMessage
 /// <summary>图标层：请求主进程重排 Z 序（文本输入态结束/意外激活后，图标层须压回壁纸之上、
 /// 普通窗口之下的桌面层——owned 窗口自行 SendToBottom 会沉到壁纸之下，只能由主进程 BottomPair 配对）。</summary>
 public sealed record RequestReorder : IpcMessage;
+
+// ---- 插件协议（M8：插件 ↔ 主进程；壁纸/图标层子进程与插件共用同一传输层）----
+
+/// <summary>插件→主：ready 之后第一条，上报插件身份（主进程校验与清单一致）。</summary>
+public sealed record PluginHello : IpcMessage
+{
+    public string PluginId { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Version { get; init; } = "";
+}
+
+/// <summary>插件→主：请求屏幕拓扑（宠物多屏走动 / 小组件定位用）。</summary>
+public sealed record MonitorsReq : IpcMessage;
+
+/// <summary>主→插件：屏幕拓扑（虚拟桌面坐标系）。</summary>
+public sealed record MonitorsInfo : IpcMessage
+{
+    public List<PluginMonitorDto> Monitors { get; init; } = [];
+}
+
+public sealed record PluginMonitorDto
+{
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int W { get; init; }
+    public int H { get; init; }
+    public bool IsPrimary { get; init; }
+}
+
+/// <summary>插件→主：读宿主代存的插件配置。</summary>
+public sealed record PluginConfigGet : IpcMessage
+{
+    public string Key { get; init; } = "";
+}
+
+/// <summary>主→插件：配置值回包（无记录 Value=null）。</summary>
+public sealed record PluginConfigValue : IpcMessage
+{
+    public string Key { get; init; } = "";
+    public string? Value { get; init; }
+}
+
+/// <summary>插件→主：写配置（宿主立即落盘 config.json 的 Plugins 节）。</summary>
+public sealed record PluginConfigSet : IpcMessage
+{
+    public string Key { get; init; } = "";
+    public string Value { get; init; } = "";
+}
+
+/// <summary>插件→主：可见错误（进日志库 ops）。</summary>
+public sealed record PluginError : IpcMessage
+{
+    public string Message { get; init; } = "";
+}
 
 // ---- 主进程 → 子进程 ----
 

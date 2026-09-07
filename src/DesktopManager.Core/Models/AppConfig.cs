@@ -1,4 +1,4 @@
-﻿namespace DesktopManager.Core.Models;
+namespace DesktopManager.Core.Models;
 
 public record AppConfig
 {
@@ -16,6 +16,8 @@ public record AppConfig
     public AppearanceConfig Appearance { get; init; } = new();
     // 右键菜单（M6 美化）：内置项开关 + 系统菜单开关 + 自定义菜单项。
     public MenuConfig Menu { get; init; } = new();
+    // M8 插件：启用列表 + 各插件配置（宿主代存）。
+    public DesktopManager.Core.Services.PluginConfigState Plugins { get; init; } = new();
 }
 
 /// <summary>右键菜单配置：内置四项与系统子菜单可开关，自定义命令项列表。</summary>

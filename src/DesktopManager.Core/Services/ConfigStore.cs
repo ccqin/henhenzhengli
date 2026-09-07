@@ -47,7 +47,8 @@ public sealed class ConfigStore : IConfigStore
                 Fences = read.Fences ?? Array.Empty<FenceConfig>(),
                 IconPositions = read.IconPositions ?? Array.Empty<IconPosition>(),
                 Wallpapers = read.Wallpapers ?? Array.Empty<WallpaperConfig>(),
-                DisplayGroups = read.DisplayGroups ?? Array.Empty<DisplayGroup>()
+                DisplayGroups = read.DisplayGroups ?? Array.Empty<DisplayGroup>(),
+                Plugins = read.Plugins ?? new PluginConfigState()
             };
             return true;
         }
