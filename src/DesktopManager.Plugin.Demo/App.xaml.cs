@@ -108,8 +108,9 @@ public partial class App : Application
         switch (msg)
         {
             case MonitorsInfo mi when mi.Monitors.Count > 0:
+                Console.Error.WriteLine($"[demo] MonitorsInfo: {mi.Monitors.Count} 屏, primary={string.Join(",", mi.Monitors.Select(m => $"{m.W}x{m.H}@{m.X},{m.Y}"))}");
                 // 漂移域 = 全部屏并集（虚拟桌面）——方块可跨屏移动；窗口本身由宿主挂全虚拟桌面
-                var u = mi.Monitors[0];
+                var u = new Rect(mi.Monitors[0].X, mi.Monitors[0].Y, mi.Monitors[0].W, mi.Monitors[0].H);
                 _allMonitors = mi.Monitors.Select(m => new Rect(m.X, m.Y, m.W, m.H)).ToList();
                 foreach (var m in mi.Monitors.Skip(1))
                     u = Rect.Union(u, new Rect(m.X, m.Y, m.W, m.H));

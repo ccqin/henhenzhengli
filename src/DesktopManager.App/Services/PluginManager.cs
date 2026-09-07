@@ -126,7 +126,7 @@ internal sealed class PluginManager : IDisposable
                 iconLayer: !m.ClickThrough);
             _running[m.Id] = new PluginRuntime { Manifest = m, Player = player, BuiltIn = IsBuiltIn(m) };
             player.Send(new Show());
-            ReorderZ();
+            ReorderRequested?.Invoke();   // 宿主做全栈重排（多屏图标层/插件/壁纸确定性全序）
             Log.Information("插件已启动：{Id}（hwnd={Hwnd}）", m.Id, hwnd);
         }
         catch (Exception ex)
@@ -146,30 +146,6 @@ internal sealed class PluginManager : IDisposable
         rt.Player.Dispose();
         Log.Information("插件已停止：{Id}", id);
     }
-
-    /// <summary>Z 序重排：插件窗口插到图标层正下方（壁纸仍在最底）。
-    /// 图标层的 BottomPair/RequestReorder 链路触发全屏重排时会调到这里——幂等。</summary>
-    public void ReorderZ()
-    {
-        foreach (var rt in _running.Values)
-        {
-            try
-            {
-                var iconHwnd = FindAnyIconLayerHwnd();
-                if (iconHwnd != IntPtr.Zero)
-                    WindowInterop.PlaceBelow((IntPtr)rt.Player.Hwnd, iconHwnd);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "插件 Z 序重排失败：{Id}", rt.Manifest.Id);
-            }
-        }
-    }
-
-    /// <summary>找一个在线图标层窗口作为 Z 序锚点（多屏任一即可；图标层间 Z 序由各自 BottomPair 维持）。</summary>
-    public Func<IntPtr>? QueryIconLayerHwnd { get; set; }   // Z 序锚点提供者（host 注入）
-
-    private IntPtr FindAnyIconLayerHwnd() => QueryIconLayerHwnd?.Invoke() ?? IntPtr.Zero;
 
     /// <summary>广播暂停/恢复（全屏/锁屏/电池治理；SupportsPause 才收）。</summary>
     public void BroadcastPause(bool pause)
@@ -229,6 +205,9 @@ internal sealed class PluginManager : IDisposable
         ConfigMutator?.Invoke(id, key, value);
         _saveNow();
     }
+
+    /// <summary>插件启停后请求宿主做桌面层全栈 Z 序重排（多屏图标层/插件/壁纸确定性全序）。</summary>
+    public Action? ReorderRequested { get; set; }
 
     /// <summary>配置写钩子（MultiMonitorHost 注入：改其 _pluginConfig 字段并进聚合快照）。</summary>
     public Action<string, string, string>? ConfigMutator { get; set; }

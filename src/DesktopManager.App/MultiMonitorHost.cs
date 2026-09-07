@@ -100,7 +100,7 @@ public sealed class MultiMonitorHost
             if (!on) list.RemoveAll(x => x == id);
             _pluginConfig = _pluginConfig with { Enabled = list };
         };
-        _plugins.QueryIconLayerHwnd = () => (IntPtr)(_iconChildren.Values.FirstOrDefault()?.Player.Hwnd ?? 0);
+        _plugins.ReorderRequested = ReorderDesktopStack;   // 插件启停 → 全栈确定性重排
         if (_transcoder.Available)
             Log.Information("壁纸转码器就绪（ffmpeg 已找到，非 HEVC/高帧率壁纸将后台转码）");
         else
@@ -245,6 +245,26 @@ public sealed class MultiMonitorHost
         }
     }
 
+    /// <summary>桌面层全栈 Z 序重排（M8）：显式构造确定性全序——
+    /// 各屏图标层 → 插件 → 各屏壁纸层（顶→底），链式插入（每个放前一个正下方）。
+    /// 单锚插入（原 BottomPair+插件 ReorderZ）在多屏下图标层互踩：插件可能落到某屏图标层之上（真机：方块在副屏盖住图标）。</summary>
+    private void ReorderDesktopStack()
+    {
+        try
+        {
+            var order = new List<IntPtr>();
+            order.AddRange(_iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd));
+            order.AddRange(_plugins.Running.Values.Select(p => (IntPtr)p.Player.Hwnd));
+            order.AddRange(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd));
+            for (int i = 1; i < order.Count; i++)
+                WindowInterop.PlaceBelow(order[i], order[i - 1]);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "桌面层全栈重排失败");
+        }
+    }
+
     /// <summary>Z 序编排：图标层置底 + 壁纸窗插其正下方（M5 BottomPair， hwnd 来自子进程 Ready 上报）。</summary>
     private void BottomPair(string monitorId)
     {
@@ -360,8 +380,7 @@ public sealed class MultiMonitorHost
             case RequestReorder:
                 // 图标层输入态结束/意外激活后 Z 序须压回桌面层：本进程 BottomPair 配对
                 // （图标层置底 + 壁纸插其下）。消息不区分屏（多屏图标层共享静态事件），全屏重排幂等。
-                foreach (var mon in _iconChildren.Keys.ToList()) BottomPair(mon);
-                _plugins.ReorderZ();
+                ReorderDesktopStack();
                 break;
 
             case IconAction ia:
