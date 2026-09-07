@@ -314,6 +314,27 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 }
                 return IntPtr.Zero;
             });
+            // M8：空白区点击穿透——桌面层宠物在图标层下方，鼠标落到图标层时查 WPF hit-test，
+            // 未命中任何实际内容（图标/收纳盒/选择框）返回 HTTRANSPARENT 让点击穿到宠物。
+            // 命中内容则正常 HTCLIENT（图标交互不受影响）。
+            System.Windows.Interop.HwndSource.FromHwnd(_hwnd)?.AddHook((h, msg, w, l, ref handled) =>
+            {
+                const int WM_NCHITTEST = 0x0084;
+                if (msg != WM_NCHITTEST) return IntPtr.Zero;
+                var ptWpf = new Point(((long)l & 0xFFFF) - _workArea.X, (((long)l >> 16) & 0xFFFF) - _workArea.Y);
+                // 符号扩展负坐标（副屏）
+                if (ptWpf.X > 32767) ptWpf.X -= 65536;
+                if (ptWpf.Y > 32767) ptWpf.Y -= 65536;
+                if (ptWpf.X < 0 || ptWpf.Y < 0 || ptWpf.X >= ActualWidth || ptWpf.Y >= ActualHeight)
+                    return IntPtr.Zero;
+                var hit = VisualTreeHelper.HitTest(this, ptWpf);
+                if (hit is null)
+                {
+                    handled = true;
+                    return new IntPtr(-1); // HTTRANSPARENT：穿透到下层（宠物）
+                }
+                return IntPtr.Zero; // 命中内容（图标等）：默认 HTCLIENT
+            });
             // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
             WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);

@@ -25,18 +25,22 @@ internal sealed class PetBrain
     private double _floor => _world.Bottom - Size - 60;         // 底边离任务栏
     private double _ceil => _world.Top + 8;
 
+    public bool Ready { get; private set; }
+
     public void SetBounds(List<Rect> screens)
     {
         if (screens.Count == 0) return;
         var u = screens[0];
         foreach (var s in screens.Skip(1)) u = Rect.Union(u, s);
         _world = u;
+        Ready = true;
         if (X < u.Left || X > u.Right - Size) X = u.Left + u.Width / 2;
-        if (Y < u.Top || Y > u.Bottom - Size) Y = _floor;
+        Y = _floor;   // 无论何时收到拓扑都落到地面（初始/拓扑变化后不在半空飘）
     }
 
     public void Step(bool dragging)
     {
+        if (!Ready) return;   // MonitorsInfo 未到（_world 空）不动——否则钳到 0,0 飘出屏
         _stateTicks++;
         if (_moodTicks > 0) _moodTicks--;
 
