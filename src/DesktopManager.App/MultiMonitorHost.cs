@@ -252,9 +252,11 @@ public sealed class MultiMonitorHost
     {
         try
         {
+            // above-icons 插件（宠物等需要鼠标交互的）→ 图标层 → above-wallpaper 插件 → 壁纸
             var order = new List<IntPtr>();
+            order.AddRange(_plugins.Running.Values.Where(p => p.Manifest.ZOrder == "above-icons").Select(p => (IntPtr)p.Player.Hwnd));
             order.AddRange(_iconChildren.Values.Select(c => (IntPtr)c.Player.Hwnd));
-            order.AddRange(_plugins.Running.Values.Select(p => (IntPtr)p.Player.Hwnd));
+            order.AddRange(_plugins.Running.Values.Where(p => p.Manifest.ZOrder != "above-icons").Select(p => (IntPtr)p.Player.Hwnd));
             order.AddRange(_wallpaperPlayers.Values.Select(p => (IntPtr)p.Hwnd));
             for (int i = 1; i < order.Count; i++)
                 WindowInterop.PlaceBelow(order[i], order[i - 1]);
