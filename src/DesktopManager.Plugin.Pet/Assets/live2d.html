@@ -3,13 +3,18 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
+  /* 立牌风：视口白底无法去除（WebView2 运行时 airspace）→ 做成展示立牌 */
+  html { margin: 0; padding: 0; background: linear-gradient(180deg, #f8f9fb 0%, #e8ecf4 100%); overflow: hidden; height: 100%; }
+  body { margin: 0; padding: 0; height: 100%; position: relative; }
   #stage { width: 100vw; height: 100vh; }
+  .plate { position: fixed; inset: 6px; border: 2px solid rgba(90,110,160,0.35); border-radius: 18px; pointer-events: none; }
+  .plate::after { content: '◆'; position: absolute; bottom: 8px; right: 14px; color: rgba(90,110,160,0.5); font-size: 12px; }
   #fallback { color: #fff; font-size: 40px; display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 </style>
 </head>
 <body>
 <div id="stage"></div>
+<div class="plate"></div>
 <div id="fallback">🐈</div>
 <!-- 全本地化（CDN 不稳 + 白框教训）；Cubism Core 是官方运行时，必须最先加载 -->
 <script src="live2dcubismcore.min.js"></script>
@@ -22,17 +27,26 @@
   const qs = params.get('qs');  // 查询 Live2D 模型的全局参数（暂留扩展）
 
   const app = new PIXI.Application({
-    view: document.getElementById('stage'),
-    transparent: true, antialias: true,
+    backgroundAlpha: 0, antialias: true,
     resolution: 1, autoDensity: true,
     width: innerWidth, height: innerHeight,
   });
+  document.body.appendChild(app.view);   // 自建 canvas（传 div 当 view 行为不定，白屏元凶之一）
 
   let model = null;
   if (modelUrl && window.PIXI.live2d) {
     try {
       model = await PIXI.live2d.Model.from(modelUrl);
       app.stage.addChild(model);
+      // 模型缩放到取景框（stage 高度的 ~90%）并锚定底部中心（站姿）
+      const fit = () => {
+        const sc = (innerHeight * 0.9) / (model.internalModel.originalHeight || 1200);
+        model.scale.set(sc);
+        model.anchor.set(0.5, 0.5);
+        model.position.set(innerWidth / 2, innerHeight / 2);
+      };
+      fit();
+      addEventListener('resize', fit);
       // 状态动作映射（宿主 postMessage 的 state → Live2D motion 组名）
       // Mark 模型组：Idle/Tap/FlickDown/FlickUp——walk/drag 用 Tap 池，fall 用 FlickUp，sleep 复用 idle
       const MOTIONS = {

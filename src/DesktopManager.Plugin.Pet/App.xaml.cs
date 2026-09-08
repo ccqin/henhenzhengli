@@ -63,6 +63,8 @@ public partial class App : Application
             {
                 DefaultBackgroundColor = System.Drawing.Color.FromArgb(0, 0, 0, 0),   // alpha=0 显式（Transparent 某些版本不生效=白框）
                 Width = PetBrain.Size * 1.6, Height = PetBrain.Size * 1.6,   // 模型取景大于判定框
+                HorizontalAlignment = HorizontalAlignment.Left,   // Canvas 内不锁对齐=Stretch 拉满全窗（半屏白，真机）
+                VerticalAlignment = VerticalAlignment.Top,
             };
             _canvas.Children.Add(_web);
             _ = InitLive2DAsync();
@@ -114,8 +116,15 @@ public partial class App : Application
             await _web!.EnsureCoreWebView2Async();
             _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            var html = Path.Combine(AppContext.BaseDirectory, "Assets", "live2d.html");
-            _web.CoreWebView2.Navigate(new Uri(html + "?model=" + Uri.EscapeDataString(_modelPath!)).AbsoluteUri);
+            // file:// 下 fetch(模型 json) 被 CORS 拦 → 虚拟域名映射（assets 与模型目录都挂进来）
+            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "pet.assets", Path.Combine(AppContext.BaseDirectory, "Assets"), Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
+            var modelDir = Path.GetDirectoryName(_modelPath!)!;
+            var modelName = Path.GetFileName(_modelPath!);
+            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "pet.model", modelDir, Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
+            _web.CoreWebView2.Navigate(
+                "http://pet.assets/live2d.html?model=" + Uri.EscapeDataString("http://pet.model/" + modelName));
             _web.CoreWebView2.WebMessageReceived += (_, e) =>
             {
                 // JS 上报渲染器状态（live2d/fallback）——fallback 时可切回 emoji
