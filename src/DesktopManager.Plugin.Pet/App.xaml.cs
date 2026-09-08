@@ -20,6 +20,8 @@ public partial class App : Application
 {
     private Window? _window;
     private TextBlock? _visual;
+    private Canvas? _canvas;
+    private bool _windowSized;   // MonitorsInfo 后窗口定位完成（Step 才开始动猫）
     private CancellationTokenSource? _cts;
     private readonly PetBrain _brain = new();
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(33) }; // ~30fps
@@ -39,29 +41,34 @@ public partial class App : Application
         base.OnStartup(e);
         // --solo：脱离宿主独立调试（Live2D 渲染器开发主力模式）——系统虚拟屏当世界，跳过 IPC
         _solo = e.Args.Contains("--solo", StringComparer.OrdinalIgnoreCase);
+        // 关键：窗口不动内容动——WPF 分层窗口逐帧移动必闪烁（DWM 合成空隙，真机）。
+        // 窗口铺主屏透明；Background=null → 空白区域系统级鼠标穿透（layered 窗 alpha=0 穿透），
+        // 只有猫 visual 的实心像素可命中（交互直达）。
         _window = new Window
         {
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false, ShowActivated = false,
-            AllowsTransparency = true, Background = Brushes.Transparent,
-            Width = PetBrain.Size, Height = PetBrain.Size,
-            Top = 400, Left = 300,
+            AllowsTransparency = true, Background = null,
+            Width = 1, Height = 1, Top = 0, Left = 0,
         };
+        _canvas = new Canvas();
         _visual = new TextBlock
         {
             FontSize = PetBrain.Size * 0.72,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
             Text = _renderer.IdleFace,
         };
-        _window.Content = new Grid { Children = { _visual } };
+        _canvas.Children.Add(_visual);
+        _window.Content = _canvas;
         _window.SourceInitialized += (_, _) =>
         {
             if (_solo)
             {
                 var vs = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
-                    SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
-                _brain.SetBounds(new List<(Rect, bool)> { (vs, true) });
+                    SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight - 2);
+                _window.Left = vs.Left; _window.Top = vs.Top;
+                _window.Width = vs.Width; _window.Height = vs.Height;
+                _brain.SetBounds(new List<(Rect, bool)> { (new Rect(0, 0, vs.Width, vs.Height), true) });
+                _windowSized = true;
                 return;
             }
             var hwnd = new WindowInteropHelper(_window).Handle;
@@ -84,10 +91,11 @@ public partial class App : Application
     // ---------- 行为主循环（UI 线程 30fps） ----------
     private void Step()
     {
+        if (!_windowSized) return;
         _brain.Step(_dragging);
-        // 窗口跟随大脑位置（虚拟桌面坐标 = WPF 双屏坐标一致）
-        _window!.Left = _brain.X;
-        _window.Top = _brain.Y;
+        // 内容动窗口不动（窗口逐帧移动=分层窗闪烁，真机教训）
+        Canvas.SetLeft(_visual!, _brain.X);
+        Canvas.SetTop(_visual!, _brain.Y);
         // 姿态渲染
         var (face, flip, angle) = _brain.Pose;
         _visual!.Text = face;
@@ -99,33 +107,25 @@ public partial class App : Application
     // ---------- 鼠标交互（拖拽 / 点击 / 双击） ----------
     private void HookMouse()
     {
+        // 坐标系：窗口=主屏全屏（0,0 起），Brain 用窗口内坐标——鼠标事件坐标直通
         _window!.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ClickCount >= 2) { _clickArmed = false; _brain.Interact("double"); return; }
             _clickArmed = true;
-            _clickOrigin = _window.PointToScreen(e.GetPosition(_window));
+            _clickOrigin = e.GetPosition(_window);
             _dragOffset = e.GetPosition(_window);
-            _window.CaptureMouse();   // 96x96 小窗：不捕获则鼠标出窗即丢 Move/Up（拖不动的根因）
         };
         _window.MouseMove += (_, e) =>
         {
-            if (Mouse.LeftButton != MouseButtonState.Pressed) return;
-            if (!_clickArmed) return;
-            var s = _window.PointToScreen(e.GetPosition(_window));
-            if (Math.Abs(s.X - _clickOrigin.X) + Math.Abs(s.Y - _clickOrigin.Y) > 6)
-            {
-                _dragging = true;
-                _brain.BeginDrag();
-            }
+            if (Mouse.LeftButton != MouseButtonState.Pressed || !_clickArmed) return;
+            var p = e.GetPosition(_window);
+            if (!_dragging && Math.Abs(p.X - _clickOrigin.X) + Math.Abs(p.Y - _clickOrigin.Y) > 6)
+                _dragging = true; _brain.BeginDrag();
             if (_dragging)
-            {
-                var p = _window.PointToScreen(e.GetPosition(_window));
                 _brain.DragTo(p.X - _dragOffset.X, p.Y - _dragOffset.Y);
-            }
         };
         _window.MouseLeftButtonUp += (_, e) =>
         {
-            _window.ReleaseMouseCapture();
             if (_dragging)
             {
                 _dragging = false;
@@ -133,7 +133,10 @@ public partial class App : Application
             }
             else if (_clickArmed)
             {
-                _brain.Interact(e.GetPosition(_window).Y < PetBrain.Size * 0.4 ? "head" : "body");
+                // 命中判断：点击点相对猫位置（猫区域才收到事件——null 背景穿透保证）
+                var p = e.GetPosition(_window);
+                var relY = p.Y - _brain.Y;
+                _brain.Interact(relY < PetBrain.Size * 0.4 ? "head" : "body");
             }
             _clickArmed = false;
         };
@@ -165,8 +168,17 @@ public partial class App : Application
         switch (msg)
         {
             case MonitorsInfo mi:
-                _screens = mi.Monitors.Select(m => new Rect(m.X, m.Y, m.W, m.H)).ToList();
-                _brain.SetBounds(mi.Monitors.Select(m => (new Rect(m.X, m.Y, m.W, m.H), m.IsPrimary)).ToList());
+                {
+                    _screens = mi.Monitors.Select(m => new Rect(m.X, m.Y, m.W, m.H)).ToList();
+                    var p = mi.Monitors.FirstOrDefault(m => m.IsPrimary) ?? mi.Monitors[0];
+                    Dispatcher.BeginInvoke(() =>
+                    {
+                        _window!.Left = p.X; _window!.Top = p.Y;
+                        _window!.Width = p.W; _window!.Height = p.H - 2;   // 底缝防任务栏全屏检测
+                        _brain.SetBounds(new List<(Rect, bool)> { (new Rect(0, 0, p.W, p.H - 2), true) });
+                        _windowSized = true;
+                    });
+                }
                 break;
             case Pause:
                 Dispatcher.BeginInvoke(() =>
