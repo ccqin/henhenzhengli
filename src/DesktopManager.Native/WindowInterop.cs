@@ -124,7 +124,7 @@ public static class WindowInterop
     /// 把窗口 Owner 设为 SHELLDLL_DefView（桌面图标视图）。owned 窗口不被 Win+D/ShowDesktop
     /// 最小化（跟随 shell owner）且 Z 序天然贴桌面层；owner 是顶层关系非 SetParent 父子，
     /// 无跨进程渲染问题（本机 SetParent 桌面层物理输出失效的坑完全绕开）。</summary>
-    public static void AttachTopLevel(IntPtr hWnd, int monX, int monY, int monW, int monH, bool iconLayer = false)
+    public static void AttachTopLevel(IntPtr hWnd, int monX, int monY, int monW, int monH, bool iconLayer = false, bool keepSize = false)
     {
         var defView = GetShellDefView();
         if (defView != IntPtr.Zero)
@@ -133,7 +133,8 @@ public static class WindowInterop
         ex |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
         SetExtendedStyle(hWnd, ex);
-        SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOACTIVATE);
+        if (!keepSize) // 插件自管理尺寸位置（宠物 96x96 小窗；宿主铺全桌面会把它顶出屏外）
+            SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOACTIVATE);
     }
 
 
