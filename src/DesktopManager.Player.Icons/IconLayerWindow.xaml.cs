@@ -362,6 +362,7 @@ public partial class IconLayerWindow : Window, IInteractiveHost
 
         // T6：画布空白右键 → 新建收纳盒。
         IconCanvas.ContextMenu = BuildCanvasContextMenu();
+        IconCanvas.ContextMenuOpening += IconCanvas_ContextMenuOpening;
 
         // B2：框选（Preview 隧道：先于图标/空白自身的处理）。
         IconCanvas.PreviewMouseLeftButtonDown += Canvas_PreviewMouseLeftButtonDown;
@@ -401,6 +402,36 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>M8：宿主下发的插件菜单项缓存（下次空白菜单打开时渲染）。</summary>
     public void SetPluginMenuItems(List<DesktopManager.Ipc.PluginMenuItemDto> items) =>
         _pendingPluginMenuItems = items;
+
+    // M8：空白菜单打开时刷新插件项——移除占位分隔线后的旧项，插入缓存项，同时请求宿主（下次打开生效）
+    private void IconCanvas_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (IconCanvas.ContextMenu is not { } menu) return;
+        var sep = menu.Items.OfType<Separator>().FirstOrDefault(s => s.Tag as string == "__pluginSep");
+        if (sep is null) return;
+        // 清掉分隔线之后的全部插件项
+        var idx = menu.Items.IndexOf(sep) + 1;
+        while (menu.Items.Count > idx) menu.Items.RemoveAt(idx);
+        // 插入缓存（上次请求的结果）
+        var items = _pendingPluginMenuItems;
+        if (items is { Count: > 0 })
+        {
+            sep.Visibility = Visibility.Visible;
+            foreach (var it in items)
+            {
+                var captured = it;
+                var mi = new MenuItem { Header = it.Title };
+                mi.Click += (_, _) => Host?.PluginMenuClicked(captured.PluginId, captured.ItemId);
+                menu.Items.Add(mi);
+            }
+        }
+        else
+        {
+            sep.Visibility = Visibility.Collapsed;
+        }
+        // 异步请求下一次的数据（宿主返回后缓存，下次打开渲染）
+        Host?.RequestPluginMenu();
+    }
 
     /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
     /// T7：注入共享 IconExtractor；订阅 ConfigChanged → 防抖 Save。返回新创建的控件供调用方做加载期补充操作。</summary>
@@ -447,25 +478,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         miAlign.Click += (_, _) => AlignLooseToGrid();
         menu.Items.Add(miAlign);
 
-        // M8：插件贡献菜单（宿主查询返回后动态补充——本窗菜单对象缓存复用，插件项每次重建）
-        var pluginItems = _pendingPluginMenuItems;
-        _pendingPluginMenuItems = null;
-        if (pluginItems is { Count: > 0 })
-        {
-            menu.Items.Add(new Separator());
-            foreach (var it in pluginItems)
-            {
-                var captured = it;
-                var mi = new MenuItem { Header = it.Title };
-                mi.Click += (_, _) => Host?.PluginMenuClicked(captured.PluginId, captured.ItemId);
-                menu.Items.Add(mi);
-            }
-        }
-        else
-        {
-            // 首次打开（缓存空）：向宿主要一次，下次打开生效（菜单已建完——本轮先请求）
-            Host?.RequestPluginMenu();
-        }
+        // M8：插件贡献菜单——占位分隔线（打开时动态刷新，见 IconCanvas_ContextMenuOpening）
+        var sep = new Separator();
+        sep.Tag = "__pluginSep";
+        menu.Items.Add(sep);
         // 壁纸设置统一在托盘设置窗口（用户决策：桌面右键不再出现壁纸入口）。
         return menu;
     }

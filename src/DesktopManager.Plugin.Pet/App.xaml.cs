@@ -61,7 +61,7 @@ public partial class App : Application
             {
                 var vs = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
                     SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
-                _brain.SetBounds(new List<Rect> { vs });
+                _brain.SetBounds(new List<(Rect, bool)> { (vs, true) });
                 return;
             }
             var hwnd = new WindowInteropHelper(_window).Handle;
@@ -166,7 +166,7 @@ public partial class App : Application
         {
             case MonitorsInfo mi:
                 _screens = mi.Monitors.Select(m => new Rect(m.X, m.Y, m.W, m.H)).ToList();
-                _brain.SetBounds(_screens);
+                _brain.SetBounds(mi.Monitors.Select(m => (new Rect(m.X, m.Y, m.W, m.H), m.IsPrimary)).ToList());
                 break;
             case Pause:
                 Dispatcher.BeginInvoke(() =>

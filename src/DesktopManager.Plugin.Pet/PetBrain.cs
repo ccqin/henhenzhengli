@@ -27,11 +27,12 @@ internal sealed class PetBrain
 
     public bool Ready { get; private set; }
 
-    public void SetBounds(List<Rect> screens)
+    public void SetBounds(List<(Rect Bounds, bool IsPrimary)> screens)
     {
         if (screens.Count == 0) return;
-        var u = screens[0];
-        foreach (var s in screens.Skip(1)) u = Rect.Union(u, s);
+        // 默认主屏活动（多屏走来走去用户找不到猫——真机反馈）；多屏选项后续配置开放
+        var u = screens.FirstOrDefault(m => m.IsPrimary).Bounds;
+        if (u.Width < 10) u = screens[0].Bounds;
         _world = u;
         Ready = true;
         if (X < u.Left || X > u.Right - Size) X = u.Left + u.Width / 2;
