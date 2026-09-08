@@ -101,6 +101,10 @@ public sealed class MultiMonitorHost
             _pluginConfig = _pluginConfig with { Enabled = list };
         };
         _plugins.ReorderRequested = ReorderDesktopStack;   // 插件启停 → 全栈确定性重排
+        _plugins.SendToIconLayer = (mon, msg) =>
+        {
+            if (_iconChildren.TryGetValue(mon, out var c)) c.Player.Send(msg);
+        };
         if (_transcoder.Available)
             Log.Information("壁纸转码器就绪（ffmpeg 已找到，非 HEVC/高帧率壁纸将后台转码）");
         else
@@ -377,6 +381,14 @@ public sealed class MultiMonitorHost
             case FenceAction fa:
                 Services.LogDb.Audit("fence", fa.Action, fa.Title, monitorId);
                 SaveImmediately(); // 建盒/删盒：语义级低频操作，立即落盘（防抖窗口被杀即丢数据）
+                break;
+
+            case PluginMenuReq:
+                _plugins.SendMenuItems(monitorId);
+                break;
+
+            case PluginMenuClicked click:
+                _plugins.MenuItemClicked(click.PluginId, click.ItemId);
                 break;
 
             case RequestReorder:

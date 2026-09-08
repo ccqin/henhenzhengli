@@ -21,6 +21,10 @@ namespace DesktopManager.Ipc;
 [JsonDerivedType(typeof(PluginConfigValue), "pluginConfigValue")]
 [JsonDerivedType(typeof(PluginConfigSet), "pluginConfigSet")]
 [JsonDerivedType(typeof(PluginError), "pluginError")]
+[JsonDerivedType(typeof(PluginMenuReq), "pluginMenuReq")]
+[JsonDerivedType(typeof(PluginMenuItems), "pluginMenuItems")]
+[JsonDerivedType(typeof(PluginMenuItemClick), "pluginMenuItemClick")]
+[JsonDerivedType(typeof(PluginMenuClicked), "pluginMenuClicked")]
 [JsonDerivedType(typeof(FenceAction), "fenceAction")]
 [JsonDerivedType(typeof(IconAction), "iconAction")]
 [JsonDerivedType(typeof(SetWallpaper), "setWallpaper")]
@@ -165,6 +169,35 @@ public sealed record PluginConfigSet : IpcMessage
 {
     public string Key { get; init; } = "";
     public string Value { get; init; } = "";
+}
+
+/// <summary>图标层→主：桌面空白右键菜单打开，查询插件贡献的菜单项。</summary>
+public sealed record PluginMenuReq : IpcMessage;
+
+/// <summary>主→图标层：插件菜单项（含插件名前缀分组）；空=无插件菜单。</summary>
+public sealed record PluginMenuItems : IpcMessage
+{
+    public List<PluginMenuItemDto> Items { get; init; } = [];
+}
+
+public sealed record PluginMenuItemDto
+{
+    public string PluginId { get; init; } = "";
+    public string ItemId { get; init; } = "";
+    public string Title { get; init; } = "";
+}
+
+/// <summary>图标层→主：用户点击了插件贡献的桌面菜单项（含插件 id，主进程转发给插件）。</summary>
+public sealed record PluginMenuClicked : IpcMessage
+{
+    public string PluginId { get; init; } = "";
+    public string ItemId { get; init; } = "";
+}
+
+/// <summary>主→插件：用户点击了插件贡献的桌面菜单项。</summary>
+public sealed record PluginMenuItemClick : IpcMessage
+{
+    public string ItemId { get; init; } = "";
 }
 
 /// <summary>插件→主：可见错误（进日志库 ops）。</summary>

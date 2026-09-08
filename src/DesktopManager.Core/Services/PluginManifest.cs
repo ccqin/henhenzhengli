@@ -15,6 +15,7 @@ public sealed record PluginManifest
     public string ZOrder { get; init; } = "above-wallpaper";  // above-wallpaper | above-icons（预留）
     public bool ClickThrough { get; init; }           // true = 全窗口点击穿透（氛围特效类）
     public bool SupportsPause { get; init; }          // 全屏/锁屏时接收 Pause/Resume
+    public List<PluginMenuItem> MenuItems { get; init; } = [];  // 桌面空白右键菜单贡献项
     public string Directory { get; init; } = "";      // 插件所在目录（解析后回填）
 
     public string EntryPath => Path.Combine(Directory, Entry);
@@ -49,4 +50,11 @@ public sealed record PluginConfigState
 {
     public List<string> Enabled { get; init; } = [];
     public Dictionary<string, Dictionary<string, string>> Configs { get; init; } = new();
+}
+
+/// <summary>插件贡献的桌面右键菜单项：插件页/桌面空白右键可见，点击转发 PluginMenuItemClick。</summary>
+public sealed record PluginMenuItem
+{
+    public string Id { get; init; } = "";    // 插件内唯一
+    public string Title { get; init; } = ""; // 菜单显示
 }

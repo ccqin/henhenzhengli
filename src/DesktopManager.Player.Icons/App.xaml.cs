@@ -122,6 +122,9 @@ public partial class App : Application, ICrossScreenHost
                         d.Removed.Select(p => new IconItem(p, p)).ToList()));
                     break;
                 case ClearSelection: _window.ClearLocalSelection(); break;
+                case DesktopManager.Ipc.PluginMenuItems pm:
+                    _window.SetPluginMenuItems(pm.Items);
+                    break;
                 case ExportIcon ex:
                     var item = _window.ExportIcon(ex.Path);
                     Reply(new ExportIconData
@@ -153,6 +156,10 @@ public partial class App : Application, ICrossScreenHost
     }
 
     // ---------- ICrossScreenHost：跨屏操作 → IPC 请主进程中转 ----------
+
+    void ICrossScreenHost.RequestPluginMenu() => Reply(new DesktopManager.Ipc.PluginMenuReq());
+    void ICrossScreenHost.PluginMenuClicked(string pluginId, string itemId) =>
+        Reply(new DesktopManager.Ipc.PluginMenuClicked { PluginId = pluginId, ItemId = itemId });
 
     void ICrossScreenHost.TransferLoose(string path, Point pos) =>
         Reply(new TransferLooseReq { Path = path, TargetMonitorId = _monitor.PersistentId, X = pos.X, Y = pos.Y });

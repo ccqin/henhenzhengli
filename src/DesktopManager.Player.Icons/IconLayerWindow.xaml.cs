@@ -29,6 +29,12 @@ public interface ICrossScreenHost
 
     /// <summary>清除所有屏选中态（本屏稍后自行重选，或本屏主动清除）。</summary>
     void ClearAllSelection();
+
+    /// <summary>M8：空白菜单打开时向宿主请求插件菜单项（返回经 PluginMenuItems 消息下发）。</summary>
+    void RequestPluginMenu();
+
+    /// <summary>M8：插件菜单项被点击 → 主进程转发给对应插件。</summary>
+    void PluginMenuClicked(string pluginId, string itemId);
 }
 
 public partial class IconLayerWindow : Window, IInteractiveHost
@@ -112,6 +118,8 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     private IconItem? _draggedIcon;
     private Point _iconDragOrigin;     // arm 时鼠标位置（窗口坐标），超 MinimumDragDistance 才 DoDragDrop
     private Point _iconDragOffset;     // 抓取偏移（鼠标相对图标左上角），Drop 保持——原生拖放手感
+    // M8：宿主下发的插件菜单项缓存（空白菜单打开前填充；打开时消费后清空）
+    private List<DesktopManager.Ipc.PluginMenuItemDto>? _pendingPluginMenuItems;
     private bool _iconDragArmed;       // 单击 arm；双击/松手/超阈值拖出 后清零（三守卫）
     // 右键菜单目标图标（Opening 前 PreviewMouseRightButtonDown hit-test 捕获，Click 复用四项逻辑）。
     private IconItem? _contextMenuIcon;
@@ -314,27 +322,9 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 }
                 return IntPtr.Zero;
             });
-            // M8：空白区点击穿透——桌面层宠物在图标层下方，鼠标落到图标层时查 WPF hit-test，
-            // 未命中任何实际内容（图标/收纳盒/选择框）返回 HTTRANSPARENT 让点击穿到宠物。
-            // 命中内容则正常 HTCLIENT（图标交互不受影响）。
-            System.Windows.Interop.HwndSource.FromHwnd(_hwnd)?.AddHook((h, msg, w, l, ref handled) =>
-            {
-                const int WM_NCHITTEST = 0x0084;
-                if (msg != WM_NCHITTEST) return IntPtr.Zero;
-                var ptWpf = new Point(((long)l & 0xFFFF) - _workArea.X, (((long)l >> 16) & 0xFFFF) - _workArea.Y);
-                // 符号扩展负坐标（副屏）
-                if (ptWpf.X > 32767) ptWpf.X -= 65536;
-                if (ptWpf.Y > 32767) ptWpf.Y -= 65536;
-                if (ptWpf.X < 0 || ptWpf.Y < 0 || ptWpf.X >= ActualWidth || ptWpf.Y >= ActualHeight)
-                    return IntPtr.Zero;
-                var hit = VisualTreeHelper.HitTest(this, ptWpf);
-                if (!HitRealContent(hit?.VisualHit))
-                {
-                    handled = true;
-                    return new IntPtr(-1); // HTTRANSPARENT：空白穿透到下层（宠物）
-                }
-                return IntPtr.Zero; // 命中图标/收纳盒/选择框：默认处理
-            });
+            // M8 穿透 hook 已移除：HTTRANSPARENT 仅同进程有效（跨进程图标层↔插件不透，
+            // 且高频 NCHITTEST→HitTest 遍历可视树有性能/干扰嫌疑——猫闪烁候选元凶之一）
+
             // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
             WindowInterop.SetExtendedStyle(_hwnd, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
@@ -408,6 +398,10 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     /// <summary>M6 IPC：SetFences 指令入口（启动期加载本屏 Fence 子集）。</summary>
     public void ApplyFences(IReadOnlyList<FenceConfig> fenceConfigs) => LoadFences(fenceConfigs);
 
+    /// <summary>M8：宿主下发的插件菜单项缓存（下次空白菜单打开时渲染）。</summary>
+    public void SetPluginMenuItems(List<DesktopManager.Ipc.PluginMenuItemDto> items) =>
+        _pendingPluginMenuItems = items;
+
     /// <summary>创建 FenceControl、Bind、加到画布、订阅归属/变更事件、挂右键菜单（重命名/删除）。
     /// T7：注入共享 IconExtractor；订阅 ConfigChanged → 防抖 Save。返回新创建的控件供调用方做加载期补充操作。</summary>
     private FenceControl CreateFence(FenceConfig config)
@@ -452,6 +446,26 @@ public partial class IconLayerWindow : Window, IInteractiveHost
         var miAlign = new MenuItem { Header = "对齐图标" };
         miAlign.Click += (_, _) => AlignLooseToGrid();
         menu.Items.Add(miAlign);
+
+        // M8：插件贡献菜单（宿主查询返回后动态补充——本窗菜单对象缓存复用，插件项每次重建）
+        var pluginItems = _pendingPluginMenuItems;
+        _pendingPluginMenuItems = null;
+        if (pluginItems is { Count: > 0 })
+        {
+            menu.Items.Add(new Separator());
+            foreach (var it in pluginItems)
+            {
+                var captured = it;
+                var mi = new MenuItem { Header = it.Title };
+                mi.Click += (_, _) => Host?.PluginMenuClicked(captured.PluginId, captured.ItemId);
+                menu.Items.Add(mi);
+            }
+        }
+        else
+        {
+            // 首次打开（缓存空）：向宿主要一次，下次打开生效（菜单已建完——本轮先请求）
+            Host?.RequestPluginMenu();
+        }
         // 壁纸设置统一在托盘设置窗口（用户决策：桌面右键不再出现壁纸入口）。
         return menu;
     }
@@ -1447,20 +1461,6 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     // ---------- P0-T2：散落图标拖拽（R2/R3 三守卫，Layouter 数据引用模式）+ 右键 ----------
-
-    /// <summary>NCHITTEST 穿透判定：命中的 Visual 是否为实际内容——
-    /// 沿祖先链找 ContentPresenter（图标容器）/FenceControl/选择矩形；只命中画布背景=空白。</summary>
-    private static bool HitRealContent(System.Windows.DependencyObject? v)
-    {
-        while (v is System.Windows.Media.Visual pv)
-        {
-            if (pv is System.Windows.Controls.ContentPresenter or FenceControl or System.Windows.Shapes.Rectangle)
-                return true;
-            if (pv is Window) return false;  // 走到窗口根=只有背景
-            v = System.Windows.Media.VisualTreeHelper.GetParent(pv);
-        }
-        return false;
-    }
 
     /// <summary>沿可视树向上找 DataContext 为 <see cref="IconItem"/> 的元素（DataTemplate 内 ContentPresenter 及其子元素均继承该 DataContext）。</summary>
     private static IconItem? FindIconFromSource(object? source)

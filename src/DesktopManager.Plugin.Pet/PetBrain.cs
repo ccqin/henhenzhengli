@@ -126,6 +126,15 @@ internal sealed class PetBrain
 
     public void Sleep() { Current = State.Sleep; }
 
+    /// <summary>菜单"召唤宠物"：瞬移到主屏中上并坠落入场。</summary>
+    public void Summon()
+    {
+        var primary = _world.Left + _world.Width / 4;   // 并集左 1/4 ≈ 主屏中
+        X = primary;
+        Y = _world.Top + 60;
+        StartFall(0);
+    }
+
     public void Wake() { SetIdle(); }
 
     // ---- 内部转移 ----

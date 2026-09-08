@@ -32,9 +32,13 @@ public partial class App : Application
     // ---- 渲染器抽象（T2 内置 emoji；后续 Sprite/Live2D 实现 IPetRenderer 自动替换） ----
     private IPetRenderer _renderer = new EmojiPetRenderer();
 
+    private bool _solo;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // --solo：脱离宿主独立调试（Live2D 渲染器开发主力模式）——系统虚拟屏当世界，跳过 IPC
+        _solo = e.Args.Contains("--solo", StringComparer.OrdinalIgnoreCase);
         _window = new Window
         {
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
@@ -53,6 +57,13 @@ public partial class App : Application
         _window.Content = new Grid { Children = { _visual } };
         _window.SourceInitialized += (_, _) =>
         {
+            if (_solo)
+            {
+                var vs = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+                    SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+                _brain.SetBounds(new List<Rect> { vs });
+                return;
+            }
             var hwnd = new WindowInteropHelper(_window).Handle;
             IpcWriter.Write(Console.OpenStandardOutput(), new Ready { Hwnd = hwnd.ToInt64() });
             IpcWriter.Write(Console.OpenStandardOutput(), new PluginHello
@@ -94,6 +105,7 @@ public partial class App : Application
             _clickArmed = true;
             _clickOrigin = _window.PointToScreen(e.GetPosition(_window));
             _dragOffset = e.GetPosition(_window);
+            _window.CaptureMouse();   // 96x96 小窗：不捕获则鼠标出窗即丢 Move/Up（拖不动的根因）
         };
         _window.MouseMove += (_, e) =>
         {
@@ -113,6 +125,7 @@ public partial class App : Application
         };
         _window.MouseLeftButtonUp += (_, e) =>
         {
+            _window.ReleaseMouseCapture();
             if (_dragging)
             {
                 _dragging = false;
@@ -172,6 +185,14 @@ public partial class App : Application
                     _tick.Start();
                 });
                 break;
+            case DesktopManager.Ipc.PluginMenuItemClick mc:
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (mc.ItemId == "summon") { _brain.Summon(); }
+                    else if (mc.ItemId == "sleep") { _brain.Sleep(); _visual!.Text = _renderer.SleepFace; }
+                });
+                break;
+
             case DesktopManager.Ipc.Shutdown:
                 Shutdown(0);
                 break;

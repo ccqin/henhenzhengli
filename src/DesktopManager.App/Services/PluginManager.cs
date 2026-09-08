@@ -191,11 +191,49 @@ internal sealed class PluginManager : IDisposable
                 SetPluginConfig(id, set.Key, set.Value);
                 break;
 
+            case PluginMenuReq:
+                // 汇总所有运行中插件的菜单贡献（图标层空白菜单打开时查询）
+                rt.Player.Send(new PluginMenuItems
+                {
+                    Items = _running.Values
+                        .SelectMany(p => p.Manifest.MenuItems.Select(mi => new PluginMenuItemDto
+                        {
+                            PluginId = p.Manifest.Id, ItemId = mi.Id, Title = mi.Title,
+                        }))
+                        .ToList(),
+                });
+                break;
+
             case PluginError err:
                 Log.Error("插件[{Id}]：{Msg}", id, err.Message);
                 Services.LogDb.Audit("plugin", "error", err.Message, id);
                 break;
         }
+    }
+
+    /// <summary>把插件菜单项汇总发给请求屏的图标层（宿主路由）。</summary>
+    public void SendMenuItems(string monitorId)
+    {
+        // 经 MultiMonitorHost 的图标层通道发（本类无图标层引用——用回调注入）
+        SendToIconLayer?.Invoke(monitorId, new PluginMenuItems
+        {
+            Items = _running.Values
+                .SelectMany(p => p.Manifest.MenuItems.Select(mi => new PluginMenuItemDto
+                {
+                    PluginId = p.Manifest.Id, ItemId = mi.Id, Title = mi.Title,
+                }))
+                .ToList(),
+        });
+    }
+
+    /// <summary>图标层消息发送通道（host 注入）。</summary>
+    public Action<string, IpcMessage>? SendToIconLayer { get; set; }
+
+    /// <summary>桌面菜单点击转发给指定插件。</summary>
+    public void MenuItemClicked(string pluginId, string itemId)
+    {
+        if (_running.TryGetValue(pluginId, out var rt))
+            try { rt.Player.Send(new PluginMenuItemClick { ItemId = itemId }); } catch { }
     }
 
     /// <summary>写插件配置（内存 config + 立即落盘）。</summary>
