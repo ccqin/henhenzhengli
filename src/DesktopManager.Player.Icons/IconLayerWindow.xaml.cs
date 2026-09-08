@@ -328,12 +328,12 @@ public partial class IconLayerWindow : Window, IInteractiveHost
                 if (ptWpf.X < 0 || ptWpf.Y < 0 || ptWpf.X >= ActualWidth || ptWpf.Y >= ActualHeight)
                     return IntPtr.Zero;
                 var hit = VisualTreeHelper.HitTest(this, ptWpf);
-                if (hit is null)
+                if (!HitRealContent(hit?.VisualHit))
                 {
                     handled = true;
-                    return new IntPtr(-1); // HTTRANSPARENT：穿透到下层（宠物）
+                    return new IntPtr(-1); // HTTRANSPARENT：空白穿透到下层（宠物）
                 }
-                return IntPtr.Zero; // 命中内容（图标等）：默认 HTCLIENT
+                return IntPtr.Zero; // 命中图标/收纳盒/选择框：默认处理
             });
             // M6：WorkerW 子窗口——只设样式不置底（置底会压到壁纸子窗口之下）。
             var ex = WindowInterop.GetExtendedStyle(_hwnd);
@@ -1447,6 +1447,20 @@ public partial class IconLayerWindow : Window, IInteractiveHost
     }
 
     // ---------- P0-T2：散落图标拖拽（R2/R3 三守卫，Layouter 数据引用模式）+ 右键 ----------
+
+    /// <summary>NCHITTEST 穿透判定：命中的 Visual 是否为实际内容——
+    /// 沿祖先链找 ContentPresenter（图标容器）/FenceControl/选择矩形；只命中画布背景=空白。</summary>
+    private static bool HitRealContent(System.Windows.DependencyObject? v)
+    {
+        while (v is System.Windows.Media.Visual pv)
+        {
+            if (pv is System.Windows.Controls.ContentPresenter or FenceControl or System.Windows.Shapes.Rectangle)
+                return true;
+            if (pv is Window) return false;  // 走到窗口根=只有背景
+            v = System.Windows.Media.VisualTreeHelper.GetParent(pv);
+        }
+        return false;
+    }
 
     /// <summary>沿可视树向上找 DataContext 为 <see cref="IconItem"/> 的元素（DataTemplate 内 ContentPresenter 及其子元素均继承该 DataContext）。</summary>
     private static IconItem? FindIconFromSource(object? source)

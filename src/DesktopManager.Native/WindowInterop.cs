@@ -16,7 +16,7 @@ public static class WindowInterop
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private static readonly IntPtr HWND_BOTTOM = new(1);
     private static readonly IntPtr HWND_TOPMOST = new(-1);
-    private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_FRAMECHANGED = 0x0020;
 
     // 64-bit safe variants (x64 用 PtrW，x86 用 W)
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
@@ -133,7 +133,11 @@ public static class WindowInterop
         ex |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         if (!iconLayer) ex |= WS_EX_TRANSPARENT; // 壁纸点击穿透
         SetExtendedStyle(hWnd, ex);
-        if (!keepSize) // 插件自管理尺寸位置（宠物 96x96 小窗；宿主铺全桌面会把它顶出屏外）
+        if (keepSize)
+            // 插件自管理尺寸位置，但样式变更后仍需一次 FRAMECHANGED 的 SetWindowPos 生效
+            //（缺它 TOOLWINDOW/NOACTIVATE 不落地：Demo 窗口表现为普通窗口 → 触发全屏检测任务栏消失，真机）
+            SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        else
             SetWindowPos(hWnd, IntPtr.Zero, monX, monY, monW, monH, SWP_NOACTIVATE);
     }
 
