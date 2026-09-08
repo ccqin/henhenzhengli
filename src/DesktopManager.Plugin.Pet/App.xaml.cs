@@ -21,7 +21,10 @@ public partial class App : Application
     private Window? _window;
     private TextBlock? _visual;
     private Canvas? _canvas;
+    private Microsoft.Web.WebView2.Wpf.WebView2? _web;   // Live2D 模式（素材存在时启用）
+    private string? _modelPath;                          // .model3.json（null=emoji 模式）
     private bool _windowSized;   // MonitorsInfo 后窗口定位完成（Step 才开始动猫）
+    private string? _lastState;  // Live2D 状态去重（motion 只在变化时切）
     private CancellationTokenSource? _cts;
     private readonly PetBrain _brain = new();
     private readonly DispatcherTimer _tick = new() { Interval = TimeSpan.FromMilliseconds(33) }; // ~30fps
@@ -52,12 +55,27 @@ public partial class App : Application
             Width = 1, Height = 1, Top = 0, Left = 0,
         };
         _canvas = new Canvas();
-        _visual = new TextBlock
+        // 渲染器选择：assets 目录有 .model3.json → Live2D（WebView2 透明）；否则 Emoji
+        _modelPath = Live2DAvailability.FindModel(AppContext.BaseDirectory);
+        if (_modelPath is not null)
         {
-            FontSize = PetBrain.Size * 0.72,
-            Text = _renderer.IdleFace,
-        };
-        _canvas.Children.Add(_visual);
+            _web = new Microsoft.Web.WebView2.Wpf.WebView2
+            {
+                DefaultBackgroundColor = System.Drawing.Color.Transparent,
+                Width = PetBrain.Size * 1.6, Height = PetBrain.Size * 1.6,   // 模型取景大于判定框
+            };
+            _canvas.Children.Add(_web);
+            _ = InitLive2DAsync();
+        }
+        else
+        {
+            _visual = new TextBlock
+            {
+                FontSize = PetBrain.Size * 0.72,
+                Text = _renderer.IdleFace,
+            };
+            _canvas.Children.Add(_visual);
+        }
         _window.Content = _canvas;
         _window.SourceInitialized += (_, _) =>
         {
@@ -88,20 +106,62 @@ public partial class App : Application
 
     public const string PetId = "com.desktopmanager.pet";
 
+    /// <summary>Live2D 初始化：加载本地 HTML（内嵌 pixi + live2d-display，CDN 拉库）。</summary>
+    private async Task InitLive2DAsync()
+    {
+        try
+        {
+            await _web!.EnsureCoreWebView2Async();
+            _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            var html = Path.Combine(AppContext.BaseDirectory, "Assets", "live2d.html");
+            _web.CoreWebView2.Navigate(new Uri(html + "?model=" + Uri.EscapeDataString(_modelPath!)).AbsoluteUri);
+            _web.CoreWebView2.WebMessageReceived += (_, e) =>
+            {
+                // JS 上报渲染器状态（live2d/fallback）——fallback 时可切回 emoji
+                var kind = e.TryGetWebMessageAsString();
+                Console.Error.WriteLine("[pet] renderer: " + kind);
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[pet] WebView2 init fail: " + ex.Message);
+        }
+    }
+
+    /// <summary>向 Live2D 页面广播状态（映射 motion）/朝向。</summary>
+    private void PushStateToWeb(string state)
+    {
+        if (_web?.CoreWebView2 is null) return;
+        try
+        {
+            _web.CoreWebView2.PostWebMessageAsJson(
+                System.Text.Json.JsonSerializer.Serialize(new { type = "state", state }));
+        }
+        catch { }
+    }
+
     // ---------- 行为主循环（UI 线程 30fps） ----------
     private void Step()
     {
         if (!_windowSized) return;
         _brain.Step(_dragging);
         // 内容动窗口不动（窗口逐帧移动=分层窗闪烁，真机教训）
-        Canvas.SetLeft(_visual!, _brain.X);
-        Canvas.SetTop(_visual!, _brain.Y);
-        // 姿态渲染
-        var (face, flip, angle) = _brain.Pose;
-        _visual!.Text = face;
-        var rt = new ScaleTransform { ScaleX = _brain.Facing };  // 不随帧翻转（镜像晃动感，真机反馈）
-        var rot = new RotateTransform(angle);
-        _visual.RenderTransform = new TransformGroup { Children = { rt, rot } };
+        var fx = _web is not null ? _brain.X - PetBrain.Size * 0.3 : _brain.X;   // Live2D 取景框居中对齐判定框
+        var fy = _web is not null ? _brain.Y - PetBrain.Size * 0.3 : _brain.Y;
+        if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
+        if (_web is not null) { Canvas.SetLeft(_web, fx); Canvas.SetTop(_web, fy); }
+        // 状态推送给 Live2D（映射 motion）
+        var st = _brain.Current.ToString().ToLowerInvariant();
+        if (st != _lastState) { _lastState = st; PushStateToWeb(st); }
+        // Emoji 姿态渲染
+        if (_visual is not null)
+        {
+            var (face, flip, angle) = _brain.Pose;
+            _visual.Text = face;
+            var rt = new ScaleTransform { ScaleX = _brain.Facing };
+            var rot = new RotateTransform(angle);
+            _visual.RenderTransform = new TransformGroup { Children = { rt, rot } };
+        }
     }
 
     // ---------- 鼠标交互（拖拽 / 点击 / 双击） ----------
@@ -127,8 +187,8 @@ public partial class App : Application
             if (_dragging)
             {
                 _brain.DragTo(p.X - _dragOffset.X, p.Y - _dragOffset.Y);
-                Canvas.SetLeft(_visual!, _brain.X);   // 即时跟手（Step 33ms 滞后=快拖脱手感）
-                Canvas.SetTop(_visual!, _brain.Y);
+                if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
+                if (_web is not null) { Canvas.SetLeft(_web, _brain.X - PetBrain.Size * 0.3); Canvas.SetTop(_web, _brain.Y - PetBrain.Size * 0.3); }
             }
         };
         _window.MouseLeftButtonUp += (_, e) =>

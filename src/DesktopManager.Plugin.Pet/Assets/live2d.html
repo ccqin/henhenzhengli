@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
+  #stage { width: 100vw; height: 100vh; }
+  #fallback { color: #fff; font-size: 40px; display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="fallback">🐈</div>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/index.min.js"></script>
+<script>
+(async function () {
+  const params = new URLSearchParams(location.search);
+  const modelUrl = params.get('model');
+  const qs = params.get('qs');  // 查询 Live2D 模型的全局参数（暂留扩展）
+
+  const app = new PIXI.Application({
+    view: document.getElementById('stage'),
+    transparent: true, antialias: true,
+    resolution: 1, autoDensity: true,
+    width: innerWidth, height: innerHeight,
+  });
+
+  let model = null;
+  if (modelUrl && window.PIXI.live2d) {
+    try {
+      model = await PIXI.live2d.Model.from(modelUrl);
+      app.stage.addChild(model);
+      // 状态动作映射（宿主 postMessage 的 state → Live2D motion 组名）
+      const MOTIONS = {
+        idle: 'Idle', walk: 'TapBody', climb: 'Tap', fall: 'FlickUp',
+        drag: 'TapBody', sleep: 'Sleep', happy: 'TapHead',
+      };
+      window.chrome.webview.addEventListener('message', (e) => {
+        const m = e.data;
+        if (!model) return;
+        if (m.type === 'state' && MOTIONS[m.state] && model.internalModel.motionManager) {
+          model.internalModel.motionManager.startMotion(MOTIONS[m.state]);
+        }
+        if (m.type === 'look') {  // 眼神跟随（拖拽/鼠标）
+          if (model.focus) model.focus(m.x, m.y);
+        }
+        if (m.type === 'flip' && model.internalModel) {
+          model.scale.x = Math.abs(model.scale.x) * (m.to < 0 ? -1 : 1);
+        }
+      });
+    } catch (err) {
+      console.error('live2d load fail', err);
+      fallbackEmoji();
+    }
+  } else fallbackEmoji();
+
+  function fallbackEmoji() {
+    document.getElementById('fallback').style.display = 'block';
+    window.chrome?.webview?.postMessage({ type: 'renderer', kind: 'fallback' });
+  }
+
+  // 告诉宿主渲染器就绪
+  window.chrome?.webview?.postMessage({ type: 'renderer', kind: model ? 'live2d' : 'fallback' });
+
+  // 窗口尺寸同步
+  addEventListener('resize', () => app.renderer.resize(innerWidth, innerHeight));
+})();
+</script>
+</body>
+</html>

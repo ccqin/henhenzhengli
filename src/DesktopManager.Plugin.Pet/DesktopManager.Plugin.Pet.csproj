@@ -14,4 +14,12 @@
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Assets\live2d.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
