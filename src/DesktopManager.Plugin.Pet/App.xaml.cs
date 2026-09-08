@@ -99,7 +99,7 @@ public partial class App : Application
         // 姿态渲染
         var (face, flip, angle) = _brain.Pose;
         _visual!.Text = face;
-        var rt = new ScaleTransform { ScaleX = _brain.Facing * (flip ? -1 : 1) };
+        var rt = new ScaleTransform { ScaleX = _brain.Facing };  // 不随帧翻转（镜像晃动感，真机反馈）
         var rot = new RotateTransform(angle);
         _visual.RenderTransform = new TransformGroup { Children = { rt, rot } };
     }
@@ -113,7 +113,9 @@ public partial class App : Application
             if (e.ClickCount >= 2) { _clickArmed = false; _brain.Interact("double"); return; }
             _clickArmed = true;
             _clickOrigin = e.GetPosition(_window);
-            _dragOffset = e.GetPosition(_window);
+            // 抓取偏移 = 点击点相对猫（若相对窗口，差值含猫位置 → DragTo 瞬移左上角，真机）
+            var cp = e.GetPosition(_window);
+            _dragOffset = new Point(cp.X - _brain.X, cp.Y - _brain.Y);
         };
         _window.MouseMove += (_, e) =>
         {
