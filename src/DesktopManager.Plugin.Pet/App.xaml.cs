@@ -61,7 +61,7 @@ public partial class App : Application
         {
             _web = new Microsoft.Web.WebView2.Wpf.WebView2
             {
-                DefaultBackgroundColor = System.Drawing.Color.Transparent,
+                DefaultBackgroundColor = System.Drawing.Color.FromArgb(0, 0, 0, 0),   // alpha=0 显式（Transparent 某些版本不生效=白框）
                 Width = PetBrain.Size * 1.6, Height = PetBrain.Size * 1.6,   // 模型取景大于判定框
             };
             _canvas.Children.Add(_web);
@@ -113,6 +113,7 @@ public partial class App : Application
         {
             await _web!.EnsureCoreWebView2Async();
             _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
             var html = Path.Combine(AppContext.BaseDirectory, "Assets", "live2d.html");
             _web.CoreWebView2.Navigate(new Uri(html + "?model=" + Uri.EscapeDataString(_modelPath!)).AbsoluteUri);
             _web.CoreWebView2.WebMessageReceived += (_, e) =>

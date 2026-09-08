@@ -11,8 +11,10 @@
 <body>
 <div id="stage"></div>
 <div id="fallback">🐈</div>
-<script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/index.min.js"></script>
+<!-- 全本地化（CDN 不稳 + 白框教训）；Cubism Core 是官方运行时，必须最先加载 -->
+<script src="live2dcubismcore.min.js"></script>
+<script src="pixi.min.js"></script>
+<script src="pixi-live2d-display.min.js"></script>
 <script>
 (async function () {
   const params = new URLSearchParams(location.search);
@@ -32,9 +34,10 @@
       model = await PIXI.live2d.Model.from(modelUrl);
       app.stage.addChild(model);
       // 状态动作映射（宿主 postMessage 的 state → Live2D motion 组名）
+      // Mark 模型组：Idle/Tap/FlickDown/FlickUp——walk/drag 用 Tap 池，fall 用 FlickUp，sleep 复用 idle
       const MOTIONS = {
-        idle: 'Idle', walk: 'TapBody', climb: 'Tap', fall: 'FlickUp',
-        drag: 'TapBody', sleep: 'Sleep', happy: 'TapHead',
+        idle: 'Idle', walk: 'Tap', climb: 'Tap', fall: 'FlickUp',
+        drag: 'Tap', sleep: 'Idle', happy: 'FlickDown',
       };
       window.chrome.webview.addEventListener('message', (e) => {
         const m = e.data;
