@@ -123,8 +123,13 @@ public partial class App : Application
             var p = e.GetPosition(_window);
             if (!_dragging && Math.Abs(p.X - _clickOrigin.X) + Math.Abs(p.Y - _clickOrigin.Y) > 6)
                 _dragging = true; _brain.BeginDrag();
+                _window.Background = System.Windows.Media.Brushes.Transparent;   // 拖拽中全窗命中（null 穿透会断事件）
             if (_dragging)
+            {
                 _brain.DragTo(p.X - _dragOffset.X, p.Y - _dragOffset.Y);
+                Canvas.SetLeft(_visual!, _brain.X);   // 即时跟手（Step 33ms 滞后=快拖脱手感）
+                Canvas.SetTop(_visual!, _brain.Y);
+            }
         };
         _window.MouseLeftButtonUp += (_, e) =>
         {
@@ -132,6 +137,7 @@ public partial class App : Application
             {
                 _dragging = false;
                 _brain.EndDrag();
+                _window.Background = null;   // 恢复空白穿透
             }
             else if (_clickArmed)
             {
