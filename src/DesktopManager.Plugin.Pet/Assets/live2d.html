@@ -16,29 +16,25 @@
 <div id="stage"></div>
 <div class="plate"></div>
 <div id="fallback">🐈</div>
-<!-- 全本地化（CDN 不稳）；加载失败逐一上报（排查 404/解析错） -->
+<!-- console 转发必须最先（一切诊断依赖它——放在后面=前面的输出全被原生吞，排障弯路元凶） -->
 <script>
-document.addEventListener('error', (e) => {
-  if (e.target.tagName === 'SCRIPT')
-    console.error('SCRIPT LOAD FAIL', e.target.src);
-}, true);
-</script>
-<script src="live2dcubismcore.min.js"></script>
-<script src="pixi.min.js"></script>
-<script src="pixi-live2d-display.min.js"></script>
-<script>
-  // 加载后自检：三个全局各是什么
-  console.error('CHECK: typeof PIXI=' + (typeof PIXI) +
-    ' PIXI.live2d=' + (typeof PIXI !== 'undefined' ? typeof PIXI.live2d : '-') +
-    ' CubismCore=' + (typeof Live2DCubismCore !== 'undefined' ? 'ok' : 'MISSING'));
-</script>
-<script>
-// 错误全量转发宿主（stderr 进日志）——模型加载失败排查
 window.onerror = (m, u, l, c, e) => console.error('JSERR', m, '@', l + ':' + c, e && e.message);
 console.error = ((orig) => function (...a) {
   try { window.chrome?.webview?.postMessage({ type: 'console', level: 'error', text: a.map(String).join(' ') }); } catch {}
   orig.apply(console, a);
 })(console.error.bind(console));
+document.addEventListener('error', (e) => {
+  if (e.target.tagName === 'SCRIPT') console.error('SCRIPT LOAD FAIL', e.target.src);
+}, true);
+</script>
+<script src="live2dcubismcore.min.js" onerror="console.error('FAIL core')"></script>
+<script src="pixi.min.js" onerror="console.error('FAIL pixi')"></script>
+<script src="pixi-live2d-display.min.js" onerror="console.error('FAIL display')"></script>
+<script>
+  console.error('CHECK: PIXI=' + (typeof PIXI) + ' PIXI.live2d=' + (typeof PIXI !== 'undefined' ? typeof PIXI.live2d : '-') +
+    ' Core=' + (typeof Live2DCubismCore !== 'undefined' ? 'ok' : 'MISSING') + ' loc=' + location.href.slice(0, 30));
+</script>
+<script>
 let __started = false;
 window.__startPet = async function () {
   if (__started) return; __started = true;
@@ -55,7 +51,7 @@ window.__startPet = async function () {
   let model = null;
   if (modelUrl && window.PIXI.live2d) {
     try {
-      model = await PIXI.live2d.Model.from(modelUrl);
+      model = await PIXI.live2d.Live2DModel.from(modelUrl);
       app.stage.addChild(model);
       // 模型缩放到取景框（stage 高度的 ~90%）并锚定底部中心（站姿）
       const fit = () => {
