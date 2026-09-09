@@ -121,15 +121,33 @@ public partial class App : Application
                 "pet.assets", Path.Combine(AppContext.BaseDirectory, "Assets"), Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
             var modelDir = Path.GetDirectoryName(_modelPath!)!;
             var modelName = Path.GetFileName(_modelPath!);
+            // NavigateToString 直接注入页面内容（绕过 URL/HTTP 缓存——虚拟域页面缓存阴魂不散，真机多轮）。
+            // 相对 src 改写为 pet.assets 绝对地址（about:blank 基址无相对解析）；模型路径由 NavigationCompleted 注入。
+            var htmlText = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "live2d.html"));
+            htmlText = htmlText.Replace("src=\"live2dcubismcore.min.js\"", "src=\"http://pet.assets/live2dcubismcore.min.js\"")
+                               .Replace("src=\"pixi.min.js\"", "src=\"http://pet.assets/pixi.min.js\"")
+                               .Replace("src=\"pixi-live2d-display.min.js\"", "src=\"http://pet.assets/pixi-live2d-display.min.js\"");
+            // 双虚拟域：pet.assets（JS/HTML 资源）+ pet.model（模型目录）——NavigateToString 外链需绝对地址
+            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                "pet.assets", Path.Combine(AppContext.BaseDirectory, "Assets"), Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
             _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 "pet.model", modelDir, Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
-            _web.CoreWebView2.Navigate(
-                "http://pet.assets/live2d.html?model=" + Uri.EscapeDataString("http://pet.model/" + modelName));
+            _web.CoreWebView2.NavigationCompleted += async (_, nav) =>
+            {
+                if (!nav.IsSuccess) return;
+                await _web.CoreWebView2.ExecuteScriptAsync(
+                    $"window.__MODEL__ = {System.Text.Json.JsonSerializer.Serialize("http://pet.model/" + modelName)}; __startPet && __startPet();");
+            };
+            _web.CoreWebView2.NavigateToString(htmlText);
             _web.CoreWebView2.WebMessageReceived += (_, e) =>
             {
-                // JS 上报渲染器状态（live2d/fallback）——fallback 时可切回 emoji
-                var kind = e.TryGetWebMessageAsString();
-                Console.Error.WriteLine("[pet] renderer: " + kind);
+                // JS console/renderer 上报 → stderr（进主日志，排障通道）
+                try
+                {
+                    var json = e.WebMessageAsJson;
+                    Console.Error.WriteLine("[pet][web] " + json);
+                }
+                catch { }
             };
         }
         catch (Exception ex)
@@ -263,14 +281,18 @@ public partial class App : Application
                 {
                     _tick.Stop();
                     _brain.Sleep();
-                    _visual!.Text = _renderer.SleepFace;
-                    _visual.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.15, TimeSpan.FromSeconds(1)));
+                    if (_visual is not null)   // Live2D 模式无 _visual（NRE 崩溃元凶，真机：全屏检测发 Pause 即崩）
+                    {
+                        _visual.Text = _renderer.SleepFace;
+                        _visual.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.15, TimeSpan.FromSeconds(1)));
+                    }
+                    if (_web is not null) PushStateToWeb("sleep");
                 });
                 break;
             case Resume:
                 Dispatcher.BeginInvoke(() =>
                 {
-                    _visual!.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromSeconds(0.6)));
+                    _visual?.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromSeconds(0.6)));
                     _brain.Wake();
                     _tick.Start();
                 });
