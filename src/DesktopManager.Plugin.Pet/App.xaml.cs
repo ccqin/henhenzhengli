@@ -75,7 +75,7 @@ public partial class App : Application
             _gl.VerticalAlignment = VerticalAlignment.Top;
             _gl.Start(settings);
             _canvas.Children.Add(_gl);
-            _gl.Loaded += (_, _) => _ = InitLive2DAsync();
+            _gl.Loaded += (_, _) => InitLive2D();
         }
         else
         {
@@ -116,19 +116,45 @@ public partial class App : Application
 
     public const string PetId = "com.desktopmanager.pet";
 
-    /// <summary>Live2D Native 渲染初始化（Live2DCSharpSDK）。</summary>
-    private async Task InitLive2DAsync()
+    private Live2DCSharpSDK.App.LAppDelegate? _lapp;
+    private string? _modelDir;
+    private string? _modelName;
+
+    /// <summary>Live2D Native 渲染初始化（仿 SDK Demo MainWindow 模式）。</summary>
+    private void InitLive2D()
     {
         try
         {
-            Console.Error.WriteLine("[pet] Live2D Native init: " + _modelPath);
-            // TODO: 调用 Live2DCSharpSDK 加载模型、渲染循环、motion 映射
-            // 第一步先验证 GLWpfControl 透明渲染管线
+            var cubismAllocator = new Live2DCSharpSDK.App.LAppAllocator();
+            var cubismOption = new Live2DCSharpSDK.Framework.CubismOption
+            {
+                LogFunction = Console.WriteLine,
+                LoggingLevel = Live2DCSharpSDK.App.LAppDefine.CubismLoggingLevel,
+            };
+            Live2DCSharpSDK.Framework.CubismFramework.StartUp(cubismAllocator, cubismOption);
+
+            _lapp = new Live2DCSharpSDK.OpenGL.LAppDelegateOpenGL(new Live2DCSharpSDK.WPF.OpenTKWPFApi(_gl))
+            {
+                BGColor = new(0, 0, 0, 0),   // 完全透明背景
+            };
+            _modelDir = System.IO.Path.GetDirectoryName(_modelPath!)!;
+            _modelName = System.IO.Path.GetFileName(_modelPath!).Replace(".model3.json", "");  // GetFileNameWithoutExtension 只去最后一段 .json，剩 .model3 会让 SDK 拼错路径
+            _lapp.Live2dManager.LoadModel(_modelDir, _modelName);
+            Console.Error.WriteLine("[pet] Live2D model loaded: " + _modelName);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("[pet] Live2D init fail: " + ex.Message);
+            Console.Error.WriteLine("[pet] Live2D init fail: " + ex);
         }
+    }
+
+    /// <summary>GLWpfControl 渲染回调（SDK Run 驱动整个渲染循环）。</summary>
+    private void GlRender(TimeSpan ts)
+    {
+        if (_lapp is null) return;
+        OpenTK.Graphics.OpenGL4.GL.ClearColor(0f, 0f, 0f, 0f);
+        OpenTK.Graphics.OpenGL4.GL.Clear(OpenTK.Graphics.OpenGL4.ClearBufferMask.ColorBufferBit | OpenTK.Graphics.OpenGL4.ClearBufferMask.DepthBufferBit);
+        _lapp.Run((float)ts.TotalSeconds);
     }
 
     // ---------- 行为主循环（UI 线程 30fps） ----------
