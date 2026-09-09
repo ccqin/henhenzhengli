@@ -56,7 +56,10 @@ public partial class App : Application
         };
         _canvas = new Canvas();
         // 渲染器选择：assets 目录有 .model3.json → Live2D（WebView2 透明）；否则 Emoji
-        _modelPath = Live2DAvailability.FindModel(AppContext.BaseDirectory);
+        // Live2D 标记实验性：WebView2 在 WPF AllowsTransparency 窗口有 airspace 白底限制
+        // （HwndHost 破坏整窗 per-pixel 透明 = 全屏白，真机验证）。设环境变量 DM_PET_LIVE2D=1 启用
+        _modelPath = Environment.GetEnvironmentVariable("DM_PET_LIVE2D") == "1"
+            ? Live2DAvailability.FindModel(AppContext.BaseDirectory) : null;
         if (_modelPath is not null)
         {
             _web = new Microsoft.Web.WebView2.Wpf.WebView2
