@@ -21,8 +21,8 @@ public partial class App : Application
     private Window? _window;
     private TextBlock? _visual;
     private Canvas? _canvas;
-    private Microsoft.Web.WebView2.Wpf.WebView2? _web;   // Live2D 模式（素材存在时启用）
     private string? _modelPath;                          // .model3.json（null=emoji 模式）
+    private OpenTK.Wpf.GLWpfControl? _gl;                // Live2D 渲染面（D3DImage 透明）
     private bool _windowSized;   // MonitorsInfo 后窗口定位完成（Step 才开始动猫）
     private string? _lastState;  // Live2D 状态去重（motion 只在变化时切）
     private CancellationTokenSource? _cts;
@@ -58,19 +58,24 @@ public partial class App : Application
         // 渲染器选择：assets 目录有 .model3.json → Live2D（WebView2 透明）；否则 Emoji
         // Live2D 标记实验性：WebView2 在 WPF AllowsTransparency 窗口有 airspace 白底限制
         // （HwndHost 破坏整窗 per-pixel 透明 = 全屏白，真机验证）。设环境变量 DM_PET_LIVE2D=1 启用
-        _modelPath = Environment.GetEnvironmentVariable("DM_PET_LIVE2D") == "1"
-            ? Live2DAvailability.FindModel(AppContext.BaseDirectory) : null;
+        _modelPath = Live2DAvailability.FindModel(AppContext.BaseDirectory);
         if (_modelPath is not null)
         {
-            _web = new Microsoft.Web.WebView2.Wpf.WebView2
+            // Live2DCSharpSDK + OpenTK GLWpfControl：D3DImage 共享纹理，原生 per-pixel alpha（无 WebView2 airspace）
+            var settings = new OpenTK.Wpf.GLWpfControlSettings
             {
-                DefaultBackgroundColor = System.Drawing.Color.FromArgb(0, 0, 0, 0),   // alpha=0 显式（Transparent 某些版本不生效=白框）
-                Width = PetBrain.Size * 1.6, Height = PetBrain.Size * 1.6,   // 模型取景大于判定框
-                HorizontalAlignment = HorizontalAlignment.Left,   // Canvas 内不锁对齐=Stretch 拉满全窗（半屏白，真机）
-                VerticalAlignment = VerticalAlignment.Top,
+                MajorVersion = 4, MinorVersion = 3,
+                RenderContinuously = true,
+                TransparentBackground = true,
             };
-            _canvas.Children.Add(_web);
-            _ = InitLive2DAsync();
+            _gl = new OpenTK.Wpf.GLWpfControl();
+            _gl.Width = PetBrain.Size * 1.6;
+            _gl.Height = PetBrain.Size * 1.6;
+            _gl.HorizontalAlignment = HorizontalAlignment.Left;
+            _gl.VerticalAlignment = VerticalAlignment.Top;
+            _gl.Start(settings);
+            _canvas.Children.Add(_gl);
+            _gl.Loaded += (_, _) => _ = InitLive2DAsync();
         }
         else
         {
@@ -111,64 +116,19 @@ public partial class App : Application
 
     public const string PetId = "com.desktopmanager.pet";
 
-    /// <summary>Live2D 初始化：加载本地 HTML（内嵌 pixi + live2d-display，CDN 拉库）。</summary>
+    /// <summary>Live2D Native 渲染初始化（Live2DCSharpSDK）。</summary>
     private async Task InitLive2DAsync()
     {
         try
         {
-            await _web!.EnsureCoreWebView2Async();
-            _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            // file:// 下 fetch(模型 json) 被 CORS 拦 → 虚拟域名映射（assets 与模型目录都挂进来）
-            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                "pet.assets", Path.Combine(AppContext.BaseDirectory, "Assets"), Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
-            var modelDir = Path.GetDirectoryName(_modelPath!)!;
-            var modelName = Path.GetFileName(_modelPath!);
-            // NavigateToString 直接注入页面内容（绕过 URL/HTTP 缓存——虚拟域页面缓存阴魂不散，真机多轮）。
-            // 相对 src 改写为 pet.assets 绝对地址（about:blank 基址无相对解析）；模型路径由 NavigationCompleted 注入。
-            var htmlText = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "live2d.html"));
-            htmlText = htmlText.Replace("src=\"live2dcubismcore.min.js\"", "src=\"http://pet.assets/live2dcubismcore.min.js\"")
-                               .Replace("src=\"pixi.min.js\"", "src=\"http://pet.assets/pixi.min.js\"")
-                               .Replace("src=\"pixi-live2d-display.min.js\"", "src=\"http://pet.assets/pixi-live2d-display.min.js\"");
-            // 双虚拟域：pet.assets（JS/HTML 资源）+ pet.model（模型目录）——NavigateToString 外链需绝对地址
-            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                "pet.assets", Path.Combine(AppContext.BaseDirectory, "Assets"), Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
-            _web.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                "pet.model", modelDir, Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow);
-            _web.CoreWebView2.NavigationCompleted += async (_, nav) =>
-            {
-                if (!nav.IsSuccess) return;
-                await _web.CoreWebView2.ExecuteScriptAsync(
-                    $"window.__MODEL__ = {System.Text.Json.JsonSerializer.Serialize("http://pet.model/" + modelName)}; __startPet && __startPet();");
-            };
-            _web.CoreWebView2.NavigateToString(htmlText);
-            _web.CoreWebView2.WebMessageReceived += (_, e) =>
-            {
-                // JS console/renderer 上报 → stderr（进主日志，排障通道）
-                try
-                {
-                    var json = e.WebMessageAsJson;
-                    Console.Error.WriteLine("[pet][web] " + json);
-                }
-                catch { }
-            };
+            Console.Error.WriteLine("[pet] Live2D Native init: " + _modelPath);
+            // TODO: 调用 Live2DCSharpSDK 加载模型、渲染循环、motion 映射
+            // 第一步先验证 GLWpfControl 透明渲染管线
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("[pet] WebView2 init fail: " + ex.Message);
+            Console.Error.WriteLine("[pet] Live2D init fail: " + ex.Message);
         }
-    }
-
-    /// <summary>向 Live2D 页面广播状态（映射 motion）/朝向。</summary>
-    private void PushStateToWeb(string state)
-    {
-        if (_web?.CoreWebView2 is null) return;
-        try
-        {
-            _web.CoreWebView2.PostWebMessageAsJson(
-                System.Text.Json.JsonSerializer.Serialize(new { type = "state", state }));
-        }
-        catch { }
     }
 
     // ---------- 行为主循环（UI 线程 30fps） ----------
@@ -177,13 +137,12 @@ public partial class App : Application
         if (!_windowSized) return;
         _brain.Step(_dragging);
         // 内容动窗口不动（窗口逐帧移动=分层窗闪烁，真机教训）
-        var fx = _web is not null ? _brain.X - PetBrain.Size * 0.3 : _brain.X;   // Live2D 取景框居中对齐判定框
-        var fy = _web is not null ? _brain.Y - PetBrain.Size * 0.3 : _brain.Y;
+        var fx = _gl is not null ? _brain.X - PetBrain.Size * 0.3 : _brain.X;   // Live2D 取景框居中对齐判定框
+        var fy = _gl is not null ? _brain.Y - PetBrain.Size * 0.3 : _brain.Y;
         if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
-        if (_web is not null) { Canvas.SetLeft(_web, fx); Canvas.SetTop(_web, fy); }
+        if (_gl is not null) { Canvas.SetLeft(_gl, fx); Canvas.SetTop(_gl, fy); }
         // 状态推送给 Live2D（映射 motion）
-        var st = _brain.Current.ToString().ToLowerInvariant();
-        if (st != _lastState) { _lastState = st; PushStateToWeb(st); }
+
         // Emoji 姿态渲染
         if (_visual is not null)
         {
@@ -214,12 +173,12 @@ public partial class App : Application
             var p = e.GetPosition(_window);
             if (!_dragging && Math.Abs(p.X - _clickOrigin.X) + Math.Abs(p.Y - _clickOrigin.Y) > 6)
                 _dragging = true; _brain.BeginDrag();
-                _window.Background = System.Windows.Media.Brushes.Transparent;   // 拖拽中全窗命中（null 穿透会断事件）
+                _window.Background = System.Windows.Media.Brushes.Transparent;   // 拖拽中全窗命中
             if (_dragging)
             {
                 _brain.DragTo(p.X - _dragOffset.X, p.Y - _dragOffset.Y);
                 if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
-                if (_web is not null) { Canvas.SetLeft(_web, _brain.X - PetBrain.Size * 0.3); Canvas.SetTop(_web, _brain.Y - PetBrain.Size * 0.3); }
+                if (_gl is not null) { Canvas.SetLeft(_gl, _brain.X - PetBrain.Size * 0.3); Canvas.SetTop(_gl, _brain.Y - PetBrain.Size * 0.3); }
             }
         };
         _window.MouseLeftButtonUp += (_, e) =>
@@ -289,7 +248,7 @@ public partial class App : Application
                         _visual.Text = _renderer.SleepFace;
                         _visual.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.15, TimeSpan.FromSeconds(1)));
                     }
-                    if (_web is not null) PushStateToWeb("sleep");
+                    if (_gl is not null) { /* TODO: motion */ }
                 });
                 break;
             case Resume:

@@ -12,10 +12,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
+    <ProjectReference Include="..\Live2DCSharpSDK\Live2DCSharpSDK.OpenGL.WPF\Live2DCSharpSDK.OpenGL.WPF.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
   </ItemGroup>
 
   <ItemGroup>
