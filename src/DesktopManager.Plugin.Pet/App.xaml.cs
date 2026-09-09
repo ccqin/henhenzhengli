@@ -58,7 +58,10 @@ public partial class App : Application
         // 渲染器选择：assets 目录有 .model3.json → Live2D（WebView2 透明）；否则 Emoji
         // Live2D 标记实验性：WebView2 在 WPF AllowsTransparency 窗口有 airspace 白底限制
         // （HwndHost 破坏整窗 per-pixel 透明 = 全屏白，真机验证）。设环境变量 DM_PET_LIVE2D=1 启用
-        _modelPath = Live2DAvailability.FindModel(AppContext.BaseDirectory);
+        // GLWpfControl/D3DImage 在本机 Intel A780 物理输出失效（同 SetParent WorkerW 的老问题，
+        // 真机红色测试人眼不可见）。回退 Emoji 默认。DM_PET_LIVE2D=1 可实验性启用。
+        _modelPath = Environment.GetEnvironmentVariable("DM_PET_LIVE2D") == "1"
+            ? Live2DAvailability.FindModel(AppContext.BaseDirectory) : null;
         if (_modelPath is not null)
         {
             // Live2DCSharpSDK + OpenTK GLWpfControl：D3DImage 共享纹理，原生 per-pixel alpha（无 WebView2 airspace）
@@ -151,10 +154,11 @@ public partial class App : Application
     /// <summary>GLWpfControl 渲染回调（SDK Run 驱动整个渲染循环）。</summary>
     private void GlRender(TimeSpan ts)
     {
-        if (_lapp is null) return;
-        OpenTK.Graphics.OpenGL4.GL.ClearColor(0f, 0f, 0f, 0f);
-        OpenTK.Graphics.OpenGL4.GL.Clear(OpenTK.Graphics.OpenGL4.ClearBufferMask.ColorBufferBit | OpenTK.Graphics.OpenGL4.ClearBufferMask.DepthBufferBit);
-        _lapp.Run((float)ts.TotalSeconds);
+        // 物理输出诊断：画纯红色（alpha=1）+ 角形——如果人眼可见说明 OpenGL 输出 OK
+        OpenTK.Graphics.OpenGL4.GL.ClearColor(1f, 0f, 0f, 1f);
+        OpenTK.Graphics.OpenGL4.GL.Clear(OpenTK.Graphics.OpenGL4.ClearBufferMask.ColorBufferBit);
+        // 不调 _lapp.Run（先验证管线）
+        // if (_lapp is not null) _lapp.Run((float)ts.TotalSeconds);
     }
 
     // ---------- 行为主循环（UI 线程 30fps） ----------
