@@ -22,7 +22,8 @@ public partial class App : Application
     private TextBlock? _visual;
     private Canvas? _canvas;
     private string? _modelPath;                          // .model3.json（null=emoji 模式）
-    private OpenTK.Wpf.GLWpfControl? _gl;                // Live2D 渲染面（D3DImage 透明）
+    private PetGlHost? _glHost;                          // Live2D 离屏渲染器（隐藏 GameWindow + ReadPixels）
+    private PetLayeredWindow? _layered;                   // Win32 分层窗口（UpdateLayeredWindow per-pixel alpha）
     private bool _windowSized;   // MonitorsInfo 后窗口定位完成（Step 才开始动猫）
     private string? _lastState;  // Live2D 状态去重（motion 只在变化时切）
     private CancellationTokenSource? _cts;
@@ -58,27 +59,30 @@ public partial class App : Application
         // 渲染器选择：assets 目录有 .model3.json → Live2D（WebView2 透明）；否则 Emoji
         // Live2D 标记实验性：WebView2 在 WPF AllowsTransparency 窗口有 airspace 白底限制
         // （HwndHost 破坏整窗 per-pixel 透明 = 全屏白，真机验证）。设环境变量 DM_PET_LIVE2D=1 启用
-        // GLWpfControl/D3DImage 在本机 Intel A780 物理输出失效（同 SetParent WorkerW 的老问题，
-        // 真机红色测试人眼不可见）。回退 Emoji 默认。DM_PET_LIVE2D=1 可实验性启用。
-        _modelPath = Environment.GetEnvironmentVariable("DM_PET_LIVE2D") == "1"
-            ? Live2DAvailability.FindModel(AppContext.BaseDirectory) : null;
+        // Live2DPet 同款方案：离屏 GameWindow 渲染 + ReadPixels + Win32 UpdateLayeredWindow
+        // （GLWpfControl/D3DImage 在 Intel A780 物理输出失效——不走 WPF 合成器）
+        _modelPath = Live2DAvailability.FindModel(AppContext.BaseDirectory);
         if (_modelPath is not null)
         {
-            // Live2DCSharpSDK + OpenTK GLWpfControl：D3DImage 共享纹理，原生 per-pixel alpha（无 WebView2 airspace）
-            var settings = new OpenTK.Wpf.GLWpfControlSettings
+            const int frameW = 200, frameH = 200;
+            _glHost = new PetGlHost(frameW, frameH,
+                System.IO.Path.GetDirectoryName(_modelPath)!,
+                System.IO.Path.GetFileName(_modelPath!).Replace(".model3.json", ""));
+            _layered = new PetLayeredWindow();
+            _layered.Create(200, 600, frameW, frameH);
+            _glHost.FrameReady += pixels => _layered.PushFrame(pixels);
+            try
             {
-                MajorVersion = 4, MinorVersion = 3,
-                RenderContinuously = true,
-                TransparentBackground = true,
-            };
-            _gl = new OpenTK.Wpf.GLWpfControl();
-            _gl.Width = PetBrain.Size * 1.6;
-            _gl.Height = PetBrain.Size * 1.6;
-            _gl.HorizontalAlignment = HorizontalAlignment.Left;
-            _gl.VerticalAlignment = VerticalAlignment.Top;
-            _gl.Start(settings);
-            _canvas.Children.Add(_gl);
-            _gl.Loaded += (_, _) => InitLive2D();
+                _glHost.Start();
+                _layered.Show();
+                Console.Error.WriteLine("[pet] Live2D offscreen started");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[pet] Live2D start fail: " + ex.Message);
+                _glHost?.Dispose(); _glHost = null;
+                _layered?.Dispose(); _layered = null;
+            }
         }
         else
         {
@@ -119,59 +123,14 @@ public partial class App : Application
 
     public const string PetId = "com.desktopmanager.pet";
 
-    private Live2DCSharpSDK.App.LAppDelegate? _lapp;
-    private string? _modelDir;
-    private string? _modelName;
-
-    /// <summary>Live2D Native 渲染初始化（仿 SDK Demo MainWindow 模式）。</summary>
-    private void InitLive2D()
-    {
-        try
-        {
-            var cubismAllocator = new Live2DCSharpSDK.App.LAppAllocator();
-            var cubismOption = new Live2DCSharpSDK.Framework.CubismOption
-            {
-                LogFunction = Console.WriteLine,
-                LoggingLevel = Live2DCSharpSDK.App.LAppDefine.CubismLoggingLevel,
-            };
-            Live2DCSharpSDK.Framework.CubismFramework.StartUp(cubismAllocator, cubismOption);
-
-            _lapp = new Live2DCSharpSDK.OpenGL.LAppDelegateOpenGL(new Live2DCSharpSDK.WPF.OpenTKWPFApi(_gl))
-            {
-                BGColor = new(0, 0, 0, 0),   // 完全透明背景
-            };
-            _modelDir = System.IO.Path.GetDirectoryName(_modelPath!)!;
-            _modelName = System.IO.Path.GetFileName(_modelPath!).Replace(".model3.json", "");  // GetFileNameWithoutExtension 只去最后一段 .json，剩 .model3 会让 SDK 拼错路径
-            _lapp.Live2dManager.LoadModel(_modelDir, _modelName);
-            Console.Error.WriteLine("[pet] Live2D model loaded: " + _modelName);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine("[pet] Live2D init fail: " + ex);
-        }
-    }
-
-    /// <summary>GLWpfControl 渲染回调（SDK Run 驱动整个渲染循环）。</summary>
-    private void GlRender(TimeSpan ts)
-    {
-        // 物理输出诊断：画纯红色（alpha=1）+ 角形——如果人眼可见说明 OpenGL 输出 OK
-        OpenTK.Graphics.OpenGL4.GL.ClearColor(1f, 0f, 0f, 1f);
-        OpenTK.Graphics.OpenGL4.GL.Clear(OpenTK.Graphics.OpenGL4.ClearBufferMask.ColorBufferBit);
-        // 不调 _lapp.Run（先验证管线）
-        // if (_lapp is not null) _lapp.Run((float)ts.TotalSeconds);
-    }
-
     // ---------- 行为主循环（UI 线程 30fps） ----------
     private void Step()
     {
         if (!_windowSized) return;
         _brain.Step(_dragging);
-        // 内容动窗口不动（窗口逐帧移动=分层窗闪烁，真机教训）
-        var fx = _gl is not null ? _brain.X - PetBrain.Size * 0.3 : _brain.X;   // Live2D 取景框居中对齐判定框
-        var fy = _gl is not null ? _brain.Y - PetBrain.Size * 0.3 : _brain.Y;
+        _glHost?.Tick(0.033f);   // 离屏渲染（UI 线程，OpenTK 要求同线程）
+        _layered?.MoveTo((int)_brain.X - 50, (int)_brain.Y - 50);   // 取景框偏移对齐猫判定框
         if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
-        if (_gl is not null) { Canvas.SetLeft(_gl, fx); Canvas.SetTop(_gl, fy); }
-        // 状态推送给 Live2D（映射 motion）
 
         // Emoji 姿态渲染
         if (_visual is not null)
@@ -208,7 +167,7 @@ public partial class App : Application
             {
                 _brain.DragTo(p.X - _dragOffset.X, p.Y - _dragOffset.Y);
                 if (_visual is not null) { Canvas.SetLeft(_visual, _brain.X); Canvas.SetTop(_visual, _brain.Y); }
-                if (_gl is not null) { Canvas.SetLeft(_gl, _brain.X - PetBrain.Size * 0.3); Canvas.SetTop(_gl, _brain.Y - PetBrain.Size * 0.3); }
+                _layered?.MoveTo((int)_brain.X - 50, (int)_brain.Y - 50);
             }
         };
         _window.MouseLeftButtonUp += (_, e) =>
@@ -278,12 +237,13 @@ public partial class App : Application
                         _visual.Text = _renderer.SleepFace;
                         _visual.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.15, TimeSpan.FromSeconds(1)));
                     }
-                    if (_gl is not null) { /* TODO: motion */ }
+                    if (_layered is not null) { _layered.Hide(); /* TODO: sleep motion */ }
                 });
                 break;
             case Resume:
                 Dispatcher.BeginInvoke(() =>
                 {
+                    if (_layered is not null) _layered.Show();
                     _visual?.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1, TimeSpan.FromSeconds(0.6)));
                     _brain.Wake();
                     _tick.Start();

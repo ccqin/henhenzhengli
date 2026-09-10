@@ -387,7 +387,7 @@ public static partial class CubismCore
     /// </summary>
     /// <param name="model">Model to query.</param>
     /// <returns>Valid pointer on success; '0'otherwise.</returns>
-    [LibraryImport("Live2DCubismCore", EntryPoint = "csmGetDrawableRenderOrders")]
+    [LibraryImport("Live2DCubismCore", EntryPoint = "csmGetRenderOrders")]
     internal static unsafe partial int* GetDrawableRenderOrders(IntPtr model);
 
     /// <summary>

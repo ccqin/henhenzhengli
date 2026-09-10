@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>DesktopManager.Plugin.Pet</AssemblyName>
     <RootNamespace>DesktopManager.Plugin.Pet</RootNamespace>
   </PropertyGroup>
@@ -13,6 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="..\DesktopManager.Ipc\DesktopManager.Ipc.csproj" />
     <ProjectReference Include="..\Live2DCSharpSDK\Live2DCSharpSDK.OpenGL.WPF\Live2DCSharpSDK.OpenGL.WPF.csproj" />
+    <ProjectReference Include="..\Live2DCSharpSDK\Live2DCSharpSDK.App\Live2DCSharpSDK.App.csproj" />
+    <ProjectReference Include="..\Live2DCSharpSDK\Live2DCSharpSDK.OpenGL.OpenTK\Live2DCSharpSDK.OpenGL.OpenTK.csproj" />
   </ItemGroup>
 
   <ItemGroup>
